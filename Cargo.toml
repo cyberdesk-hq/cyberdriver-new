@@ -27,7 +27,17 @@ use_samplerate = ["samplerate"]
 use_rubato = ["rubato"]
 use_dasp = ["dasp"]
 flutter = ["flutter_rust_bridge"]
-default = ["use_dasp"]
+# Cyberdriver branding overlay + cyberdesk_tunnel module (M3+).
+# When enabled, src/cyberdesk_branding.rs is compiled in and called
+# from core_main; src/cyberdesk_tunnel/ is also compiled (M4 onwards).
+cyberdesk = []
+# Dev-environment build of Cyberdriver. Implies `cyberdesk` and
+# overrides the URL constants in src/cyberdesk_branding.rs to point at
+# the -dev hbbs/hbbr/api hosts. Build with:
+#   cargo build --features cyberdesk-dev
+# Default build (--features cyberdesk) targets prod.
+cyberdesk-dev = ["cyberdesk"]
+default = ["use_dasp", "cyberdesk"]
 hwcodec = ["scrap/hwcodec"]
 vram = ["scrap/vram"]
 mediacodec = ["scrap/mediacodec"]
