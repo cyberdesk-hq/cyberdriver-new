@@ -145,12 +145,21 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                              still in flight; discarding partial body and starting over (cloud \
                              wire-protocol error)"
                         );
+                        pending_meta = None;
                         pending_body.clear();
                     }
 
-                    let meta: RequestMeta = serde_json::from_str(text_str).with_context(|| {
-                        format!("invalid request metadata JSON: {}", text_str)
-                    })?;
+                    let meta: RequestMeta = match serde_json::from_str(text_str) {
+                        Ok(meta) => meta,
+                        Err(err) => {
+                            log::warn!(
+                                "cyberdesk_tunnel: invalid request metadata JSON: {}; \
+                                 ignoring ({err})",
+                                text_str
+                            );
+                            continue;
+                        }
+                    };
                     pending_meta = Some(meta);
                 }
             }
@@ -208,10 +217,5 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
 /// Best-effort local hostname for the X-Piglet-Hostname header. Used
 /// only for cloud-side display (`Machine.hostname` column).
 fn hostname() -> String {
-    // Try standard env vars first (faster than syscalls); fall back
-    // to a generic name. Real hostname() crate adds a dep we don't
-    // need here.
-    std::env::var("HOSTNAME")
-        .or_else(|_| std::env::var("COMPUTERNAME"))
-        .unwrap_or_else(|_| "cyberdriver".to_string())
+    crate::common::hostname()
 }
