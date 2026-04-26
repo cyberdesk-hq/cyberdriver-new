@@ -609,6 +609,12 @@ pub async fn start_server(is_server: bool, no_server: bool) {
         crate::platform::try_kill_broker();
         #[cfg(feature = "hwcodec")]
         scrap::hwcodec::start_check_process();
+        // Spawn the cyberdesk_tunnel client onto the running tokio
+        // runtime. No-op if CYBERDESK_AGENT_KEY is unset (i.e.
+        // client-mode installs and any non-Cyberdesk build). See
+        // src/cyberdesk_tunnel/mod.rs.
+        #[cfg(feature = "cyberdesk")]
+        crate::cyberdesk_tunnel::spawn_if_enabled();
         crate::RendezvousMediator::start_all().await;
     } else {
         match crate::ipc::connect(1000, "").await {

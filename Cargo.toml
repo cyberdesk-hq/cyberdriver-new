@@ -30,7 +30,11 @@ flutter = ["flutter_rust_bridge"]
 # Cyberdriver branding overlay + cyberdesk_tunnel module (M3+).
 # When enabled, src/cyberdesk_branding.rs is compiled in and called
 # from core_main; src/cyberdesk_tunnel/ is also compiled (M4 onwards).
-cyberdesk = []
+cyberdesk = [
+    "dep:tokio-tungstenite",
+    "dep:http",
+    "dep:futures-util",
+]
 # Dev-environment build of Cyberdriver. Implies `cyberdesk` and
 # overrides the URL constants in src/cyberdesk_branding.rs to point at
 # the -dev hbbs/hbbr/api hosts. Build with:
@@ -72,6 +76,11 @@ dasp = { version = "0.11", features = ["signal", "interpolate-linear", "interpol
 rubato = { version = "0.12", optional = true }
 samplerate = { version = "0.2", optional = true }
 uuid = { version = "1.3", features = ["v4"] }
+# cyberdesk feature deps (M4+). Optional so a build with --no-default-features
+# or --features="..." that doesn't include cyberdesk doesn't pull these in.
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"], optional = true }
+http = { version = "1", optional = true }
+futures-util = { version = "0.3", optional = true }
 clap = "4.2"
 rpassword = "7.2"
 num_cpus = "1.15"
