@@ -14,7 +14,8 @@
 // builds (and our cyberdesk-connect-only build profile) don't pay the
 // dep cost or behavior change.
 
-use hbb_common::log;
+use hbb_common::{config, log};
+use serde_derive::{Deserialize, Serialize};
 
 mod client;
 mod dispatch;
@@ -30,8 +31,8 @@ mod framing;
 /// | Var                       | Meaning                                              |
 /// |---------------------------|------------------------------------------------------|
 /// | `CYBERDESK_AGENT_KEY`     | Required `ak_*`. Without it, this function no-ops.   |
-/// | `CYBERDESK_API_BASE`      | Tunnel WS base URL. Default `ws://localhost:8080`.   |
-/// | `CYBERDESK_FINGERPRINT`   | Stable machine UUID. Default: random per-run.        |
+/// | `CYBERDESK_API_BASE`      | Tunnel WS base URL. Default: branded API server.     |
+/// | `CYBERDESK_FINGERPRINT`   | Stable machine UUID. Default: persisted random UUID. |
 ///
 /// If `CYBERDESK_AGENT_KEY` is unset, the tunnel does not start. This
 /// is the correct default for client-mode installs (the laptop case)
@@ -48,11 +49,10 @@ pub fn spawn_if_enabled() {
         }
     };
 
-    let api_base = std::env::var("CYBERDESK_API_BASE")
-        .unwrap_or_else(|_| "ws://localhost:8080".to_string());
+    let api_base = std::env::var("CYBERDESK_API_BASE").unwrap_or_else(|_| default_api_base());
 
-    let fingerprint = std::env::var("CYBERDESK_FINGERPRINT")
-        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
+    let fingerprint =
+        std::env::var("CYBERDESK_FINGERPRINT").unwrap_or_else(|_| persistent_fingerprint());
 
     log::info!(
         "cyberdesk_tunnel: spawning tunnel client (api_base={}, fingerprint={})",
@@ -68,4 +68,35 @@ pub fn spawn_if_enabled() {
             Err(e) => log::error!("cyberdesk_tunnel: client exited with error: {e:?}"),
         }
     });
+}
+
+fn default_api_base() -> String {
+    let api_server = crate::cyberdesk_branding::API_SERVER;
+    if let Some(rest) = api_server.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = api_server.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        api_server.to_string()
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct TunnelConfig {
+    #[serde(default)]
+    fingerprint: String,
+}
+
+fn persistent_fingerprint() -> String {
+    let path = config::Config::path("cyberdesk_tunnel.toml");
+    let mut tunnel_config = config::load_path::<TunnelConfig>(path.clone());
+    if !tunnel_config.fingerprint.is_empty() {
+        return tunnel_config.fingerprint;
+    }
+
+    tunnel_config.fingerprint = uuid::Uuid::new_v4().to_string();
+    if let Err(err) = config::store_path(path, &tunnel_config) {
+        log::error!("cyberdesk_tunnel: failed to store fingerprint: {err}");
+    }
+    tunnel_config.fingerprint
 }
