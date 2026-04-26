@@ -177,11 +177,17 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     );
                     // 4001 = auth (no retry), 4008 = rate limit
                     // (M7 will distinguish).
+                    if let Err(err) = write.send(Message::Close(frame.clone())).await {
+                        log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
+                    }
                     if code == 4001 {
                         bail!("cyberdesk_tunnel: server rejected auth (close 4001); refusing to retry");
                     }
                 } else {
                     log::info!("cyberdesk_tunnel: server closed connection (no close frame)");
+                    if let Err(err) = write.send(Message::Close(None)).await {
+                        log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
+                    }
                 }
                 break;
             }
