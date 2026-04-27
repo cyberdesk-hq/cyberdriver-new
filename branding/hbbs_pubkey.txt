@@ -1,0 +1,23 @@
+# hbbs Ed25519 public keys
+
+The actual public-key values live in
+`src/cyberdesk_branding.rs::HBBS_PUBKEY`, gated by the Cargo feature:
+
+  - `cargo build --features cyberdesk`      → uses prod HBBS_PUBKEY
+  - `cargo build --features cyberdesk-dev`  → uses dev HBBS_PUBKEY
+
+To populate them after the M2 Fly deploy:
+
+  1. In `cyberdriver-server`, run:
+       ./scripts/setup-hbbs-keypair.sh prod
+       ./scripts/setup-hbbs-keypair.sh dev
+
+  2. Each run prints a `Public Key: <base64>` line.
+
+  3. Paste each public key into the matching arm of `HBBS_PUBKEY` in
+     `cyberdriver-new/src/cyberdesk_branding.rs`.
+
+The matching SECRET keys are stored as Fly secrets
+(HBBS_KEY_PRIV / HBBS_KEY_PUB) on the matching hbbs Fly app and are
+materialized into /root/id_ed25519 by fly-entrypoint.sh on container
+start when the volume is empty.
