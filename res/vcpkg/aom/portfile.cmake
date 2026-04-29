@@ -26,6 +26,7 @@ else()
         PATCHES
             aom-uninitialized-pointer.diff
             # aom-avx2.diff
+            aom-fix-nasm.diff
             # Can be dropped when https://bugs.chromium.org/p/aomedia/issues/detail?id=3029 is merged into the upstream
             aom-install.diff
     )
