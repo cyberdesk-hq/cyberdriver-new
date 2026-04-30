@@ -13,12 +13,12 @@
 // The wire protocol is owned by `framing.rs`; this module just runs
 // the WebSocket and the request<->response loop.
 
-use super::framing::{RequestMeta, ResponseMeta};
 use super::dispatch;
+use super::framing::{RequestMeta, ResponseMeta};
 
 use futures_util::{SinkExt, StreamExt};
 use hbb_common::anyhow::{anyhow, bail, Context, Result};
-use hbb_common::log;
+use hbb_common::{log, tokio};
 use std::collections::HashMap;
 use tokio_tungstenite::{
     connect_async,
@@ -76,8 +76,11 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
     let mut pending_meta: Option<RequestMeta> = None;
     let mut pending_body: Vec<u8> = Vec::new();
 
-    while let Some(msg) = read.next().await {
-        let msg = msg.context("WebSocket read error")?;
+    loop {
+        let msg = match read.next().await {
+            Some(msg) => msg.context("WebSocket read error")?,
+            None => break,
+        };
 
         match msg {
             Message::Text(text) => {
@@ -95,29 +98,44 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                         }
                     };
                     let body = std::mem::take(&mut pending_body);
-
+                    let method = meta.method.clone();
+                    let path = meta.path.clone();
+                    let request_id = meta.request_id.clone();
                     let (status, response_body, content_type) =
-                        dispatch::dispatch(&meta, &body);
+                        match tokio::task::spawn_blocking(move || dispatch::dispatch(&meta, &body))
+                            .await
+                        {
+                            Ok(response) => response,
+                            Err(err) => {
+                                log::error!("cyberdesk_tunnel: dispatch task failed: {err}");
+                                (
+                                    500,
+                                    br#"{"error":"cyberdesk_tunnel dispatch failed"}"#.to_vec(),
+                                    "application/json",
+                                )
+                            }
+                        };
 
                     log::info!(
                         "cyberdesk_tunnel: {} {} -> {} ({} bytes, request_id={})",
-                        meta.method,
-                        meta.path,
+                        method,
+                        path,
                         status,
                         response_body.len(),
-                        meta.request_id
+                        request_id
                     );
 
                     let mut response_headers = HashMap::new();
-                    response_headers
-                        .insert("Content-Type".to_string(), content_type.to_string());
-                    response_headers
-                        .insert("Content-Length".to_string(), response_body.len().to_string());
+                    response_headers.insert("Content-Type".to_string(), content_type.to_string());
+                    response_headers.insert(
+                        "Content-Length".to_string(),
+                        response_body.len().to_string(),
+                    );
 
                     let resp_meta = ResponseMeta {
                         status,
                         headers: response_headers,
-                        request_id: meta.request_id,
+                        request_id,
                     };
 
                     let resp_meta_json = serde_json::to_string(&resp_meta)

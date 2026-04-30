@@ -19,6 +19,7 @@ use serde_derive::{Deserialize, Serialize};
 
 mod client;
 mod dispatch;
+mod display;
 mod framing;
 
 /// Entry point called from `src/server.rs::start_server` during
