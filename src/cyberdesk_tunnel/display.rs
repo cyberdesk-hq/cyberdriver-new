@@ -217,15 +217,12 @@ fn rgba_from_pixel_buffer(pixel_buffer: &scrap::PixelBuffer<'_>) -> Result<Vec<u
     }
 
     if pixel_buffer.pixfmt() == Pixfmt::BGRA {
-        let bgra = pixel_buffer.data();
-        let mut rgba = Vec::with_capacity(width * height * 4);
-        for y in 0..height {
-            for x in 0..width {
-                let i = stride * y + 4 * x;
-                rgba.extend_from_slice(&[bgra[i + 2], bgra[i + 1], bgra[i], bgra[i + 3]]);
-            }
-        }
-        return Ok(rgba);
+        return Ok(scrap::bgra_to_rgba(
+            pixel_buffer.data(),
+            width,
+            height,
+            stride,
+        ));
     }
 
     let mut rgba = Vec::new();

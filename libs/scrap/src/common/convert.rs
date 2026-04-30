@@ -198,6 +198,17 @@ pub fn convert_to_yuv(
     Ok(())
 }
 
+pub fn bgra_to_rgba(bgra: &[u8], width: usize, height: usize, stride: usize) -> Vec<u8> {
+    let mut rgba = Vec::with_capacity(width * height * 4);
+    for y in 0..height {
+        for x in 0..width {
+            let i = stride * y + 4 * x;
+            rgba.extend_from_slice(&[bgra[i + 2], bgra[i + 1], bgra[i], bgra[i + 3]]);
+        }
+    }
+    rgba
+}
+
 #[cfg(not(target_os = "ios"))]
 pub fn convert(captured: &PixelBuffer, pixfmt: crate::Pixfmt, dst: &mut Vec<u8>) -> ResultType<()> {
     if captured.pixfmt() == pixfmt {

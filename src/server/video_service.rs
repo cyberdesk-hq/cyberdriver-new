@@ -1369,15 +1369,7 @@ fn get_rgba_from_pixelbuf<'a>(pixbuf: &scrap::PixelBuffer<'a>) -> ResultType<Vec
         scrap::convert(pixbuf, scrap::Pixfmt::RGBA, &mut rgba)?;
         Ok(rgba)
     } else {
-        let bgra = pixbuf.data();
-        let mut bit_flipped = Vec::with_capacity(w * h * 4);
-        for y in 0..h {
-            for x in 0..w {
-                let i = s * y + 4 * x;
-                bit_flipped.extend_from_slice(&[bgra[i + 2], bgra[i + 1], bgra[i], bgra[i + 3]]);
-            }
-        }
-        Ok(bit_flipped)
+        Ok(scrap::bgra_to_rgba(pixbuf.data(), w, h, *s))
     }
 }
 
