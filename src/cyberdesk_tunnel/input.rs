@@ -17,6 +17,7 @@ use std::{thread, time::Duration};
 
 const CYBERDESK_TUNNEL_CONN_ID: i32 = 0;
 const MAX_INPUT_BODY_BYTES: usize = 64 * 1024;
+const MAX_KEY_GROUPS: usize = 64;
 const KEY_TAP_DELAY: Duration = Duration::from_millis(20);
 const MOUSE_CLICK_DELAY: Duration = Duration::from_millis(35);
 
@@ -245,6 +246,9 @@ fn is_one_shot_function_key(group: &ParsedKeyGroup) -> bool {
 fn parse_key_sequence(sequence: &str) -> Result<Vec<ParsedKeyGroup>> {
     let mut groups = Vec::new();
     for raw_group in sequence.split_whitespace() {
+        if groups.len() >= MAX_KEY_GROUPS {
+            bail!("key sequence exceeds {MAX_KEY_GROUPS} group limit");
+        }
         groups.push(parse_key_group(raw_group)?);
     }
     if groups.is_empty() {
