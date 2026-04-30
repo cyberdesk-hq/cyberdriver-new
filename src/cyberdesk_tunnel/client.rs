@@ -99,7 +99,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     };
                     let body = std::mem::take(&mut pending_body);
                     let method = meta.method.clone();
-                    let path = meta.path.clone();
+                    let log_path = log_path(&meta.path);
                     let request_id = meta.request_id.clone();
                     let (status, response_body, content_type) =
                         match tokio::task::spawn_blocking(move || {
@@ -122,7 +122,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     log::info!(
                         "cyberdesk_tunnel: {} {} -> {} ({} bytes, request_id={})",
                         method,
-                        path,
+                        log_path,
                         status,
                         response_body.len(),
                         request_id
@@ -239,4 +239,52 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
 /// only for cloud-side display (`Machine.hostname` column).
 fn hostname() -> String {
     crate::common::hostname()
+}
+
+fn log_path(path: &str) -> String {
+    let route = path_without_query(path);
+    if is_filesystem_route(route) {
+        return route.to_string();
+    }
+    path.to_string()
+}
+
+fn path_without_query(path: &str) -> &str {
+    path.split_once('?').map(|(path, _)| path).unwrap_or(path)
+}
+
+fn is_filesystem_route(route: &str) -> bool {
+    matches!(
+        route,
+        "/computer/fs/list" | "/computer/fs/read" | "computer/fs/list" | "computer/fs/read"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::log_path;
+
+    #[test]
+    fn log_path_redacts_filesystem_query() {
+        assert_eq!(
+            log_path("/computer/fs/read?path=/home/alice/.ssh/id_rsa"),
+            "/computer/fs/read"
+        );
+    }
+
+    #[test]
+    fn log_path_redacts_legacy_filesystem_query() {
+        assert_eq!(
+            log_path("computer/fs/list?path=/home/alice"),
+            "computer/fs/list"
+        );
+    }
+
+    #[test]
+    fn log_path_preserves_non_filesystem_query() {
+        assert_eq!(
+            log_path("/computer/display/screenshot?format=png"),
+            "/computer/display/screenshot?format=png"
+        );
+    }
 }
