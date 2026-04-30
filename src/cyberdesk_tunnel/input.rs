@@ -20,6 +20,9 @@ const MAX_INPUT_BODY_BYTES: usize = 64 * 1024;
 const MAX_KEY_GROUPS: usize = 64;
 const KEY_TAP_DELAY: Duration = Duration::from_millis(20);
 const MOUSE_CLICK_DELAY: Duration = Duration::from_millis(35);
+const CLIPBOARD_RETRY_ATTEMPTS: usize = 8;
+const CLIPBOARD_INITIAL_DELAY: Duration = Duration::from_millis(200);
+const CLIPBOARD_RETRY_STEP: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Deserialize)]
 struct MouseMoveRequest {
@@ -66,6 +69,11 @@ struct KeyboardTypeRequest {
 struct KeyboardKeyRequest {
     text: String,
     down: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CopyToClipboardRequest {
+    text: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -203,6 +211,24 @@ pub fn keyboard_key(body: &[u8]) -> Result<Vec<u8>> {
     }
 
     empty_json()
+}
+
+pub fn copy_to_clipboard(body: &[u8]) -> Result<Vec<u8>> {
+    let request: CopyToClipboardRequest = parse_json(body)?;
+    let key_name = request.text.trim();
+    if key_name.is_empty() {
+        bail!("missing 'text' field (key name)");
+    }
+
+    clear_text_clipboard();
+
+    let copy_group = parse_key_group("ctrl+c")?;
+    send_key_group(&copy_group, true);
+    thread::sleep(KEY_TAP_DELAY);
+    send_key_group(&copy_group, false);
+
+    let clipboard_content = read_text_clipboard_with_retries();
+    Ok(serde_json::to_vec(&json!({ key_name: clipboard_content }))?)
 }
 
 fn send_mouse(event_type: i32, button: i32, x: i32, y: i32) {
@@ -423,6 +449,27 @@ fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
         );
     }
     Ok(serde_json::from_slice(body).context("invalid JSON request body")?)
+}
+
+fn clear_text_clipboard() {
+    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        let _ = clipboard.set_text(String::new());
+    }
+}
+
+fn read_text_clipboard_with_retries() -> String {
+    for attempt in 0..CLIPBOARD_RETRY_ATTEMPTS {
+        thread::sleep(CLIPBOARD_INITIAL_DELAY + (CLIPBOARD_RETRY_STEP * attempt as u32));
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            if let Ok(text) = clipboard.get_text() {
+                if !text.is_empty() {
+                    return text;
+                }
+            }
+        }
+    }
+
+    String::new()
 }
 
 fn empty_json() -> Result<Vec<u8>> {

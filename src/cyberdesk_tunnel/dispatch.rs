@@ -61,6 +61,10 @@ pub fn dispatch(meta: &RequestMeta, body: &[u8]) -> (u16, Vec<u8>, &'static str)
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(400, format!("keyboard key failed: {err:#}")),
         },
+        ("POST", "/computer/copy_to_clipboard") => match input::copy_to_clipboard(body) {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(400, format!("copy to clipboard failed: {err:#}")),
+        },
         _ => (
             501,
             br#"{"error":"not implemented in cyberdesk_tunnel yet"}"#.to_vec(),
