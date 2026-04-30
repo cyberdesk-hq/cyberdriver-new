@@ -189,6 +189,10 @@ pub fn keyboard_key(body: &[u8]) -> Result<Vec<u8>> {
         None => {
             for group in groups {
                 send_key_group(&group, true);
+                if is_one_shot_function_key(&group) {
+                    thread::sleep(KEY_TAP_DELAY);
+                    continue;
+                }
                 thread::sleep(KEY_TAP_DELAY);
                 send_key_group(&group, false);
                 thread::sleep(KEY_TAP_DELAY);
@@ -228,6 +232,13 @@ fn send_key_group(group: &ParsedKeyGroup, down: bool) {
     }
 
     crate::input_service::handle_key(&event);
+}
+
+fn is_one_shot_function_key(group: &ParsedKeyGroup) -> bool {
+    matches!(
+        group.key,
+        KeyToken::Control(ControlKey::CtrlAltDel | ControlKey::LockScreen)
+    )
 }
 
 fn parse_key_sequence(sequence: &str) -> Result<Vec<ParsedKeyGroup>> {
