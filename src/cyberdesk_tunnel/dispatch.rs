@@ -23,9 +23,26 @@
 use super::{display, framing::RequestMeta, fs, input};
 use serde_json::json;
 
-/// Route a single request to its handler. `body` is the accumulated
-/// inbound binary body (may be empty).
-pub fn dispatch(meta: &RequestMeta, body: &[u8]) -> (u16, Vec<u8>, &'static str) {
+/// Request provenance marker for routes that must only be reachable through the
+/// authenticated Cyberdesk cloud WebSocket. This module is not wired to any
+/// localhost HTTP listener; keeping the dispatcher behind this wrapper makes
+/// accidental reuse from a local server a compile-time-visible decision.
+pub(super) struct ReverseTunnelRequest<'a> {
+    meta: &'a RequestMeta,
+    body: &'a [u8],
+}
+
+impl<'a> ReverseTunnelRequest<'a> {
+    pub(super) fn from_websocket_frames(meta: &'a RequestMeta, body: &'a [u8]) -> Self {
+        Self { meta, body }
+    }
+}
+
+/// Route a single reverse-tunnel request to its handler. `body` is the
+/// accumulated inbound binary body (may be empty).
+pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'static str) {
+    let meta = request.meta;
+    let body = request.body;
     let path = path_without_query(&meta.path);
     match (meta.method.as_str(), path) {
         ("GET", "/computer/display/dimensions") => match display::dimensions() {

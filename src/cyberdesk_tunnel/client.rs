@@ -13,7 +13,7 @@
 // The wire protocol is owned by `framing.rs`; this module just runs
 // the WebSocket and the request<->response loop.
 
-use super::dispatch;
+use super::dispatch::{self, ReverseTunnelRequest};
 use super::framing::{RequestMeta, ResponseMeta};
 
 use futures_util::{SinkExt, StreamExt};
@@ -102,8 +102,11 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     let path = meta.path.clone();
                     let request_id = meta.request_id.clone();
                     let (status, response_body, content_type) =
-                        match tokio::task::spawn_blocking(move || dispatch::dispatch(&meta, &body))
-                            .await
+                        match tokio::task::spawn_blocking(move || {
+                            let request = ReverseTunnelRequest::from_websocket_frames(&meta, &body);
+                            dispatch::dispatch(request)
+                        })
+                        .await
                         {
                             Ok(response) => response,
                             Err(err) => {
