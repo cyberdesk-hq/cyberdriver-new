@@ -219,7 +219,7 @@ fn rgba_from_pixel_buffer(pixel_buffer: &scrap::PixelBuffer<'_>) -> Result<Vec<u
         return Ok(pixel_buffer.data().to_vec());
     }
 
-    if pixel_buffer.pixfmt() == Pixfmt::BGRA && stride != width * 4 {
+    if pixel_buffer.pixfmt() == Pixfmt::BGRA {
         let bgra = pixel_buffer.data();
         let mut rgba = Vec::with_capacity(width * height * 4);
         for y in 0..height {
