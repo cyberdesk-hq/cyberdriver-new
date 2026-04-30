@@ -220,7 +220,7 @@ pub fn copy_to_clipboard(body: &[u8]) -> Result<Vec<u8>> {
         bail!("missing 'text' field (key name)");
     }
 
-    clear_text_clipboard();
+    clear_text_clipboard().context("failed to clear text clipboard before copy")?;
 
     let copy_group = parse_key_group("ctrl+c")?;
     send_key_group(&copy_group, true);
@@ -451,10 +451,12 @@ fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
     Ok(serde_json::from_slice(body).context("invalid JSON request body")?)
 }
 
-fn clear_text_clipboard() {
-    if let Ok(mut clipboard) = arboard::Clipboard::new() {
-        let _ = clipboard.set_text(String::new());
-    }
+fn clear_text_clipboard() -> Result<()> {
+    let mut clipboard = arboard::Clipboard::new().context("failed to open clipboard")?;
+    clipboard
+        .set_text(String::new())
+        .context("failed to replace clipboard contents")?;
+    Ok(())
 }
 
 fn read_text_clipboard_with_retries() -> String {
