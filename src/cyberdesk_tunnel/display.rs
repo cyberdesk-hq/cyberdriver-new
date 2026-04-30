@@ -81,15 +81,12 @@ fn capture_primary_rgba() -> Result<(usize, usize, Vec<u8>)> {
 fn capture_primary_rgba_scrap() -> Result<(usize, usize, Vec<u8>)> {
     let display = primary_display()?;
     let mut capturer = Capturer::new(display).context("failed to create display capturer")?;
-    let width = capturer.width();
-    let height = capturer.height();
     let mut last_error = None;
 
     for _ in 0..CAPTURE_RETRIES {
         match capturer.frame(Duration::from_millis(250)) {
             Ok(Frame::PixelBuffer(pixel_buffer)) => {
-                let rgba = rgba_from_pixel_buffer(&pixel_buffer)?;
-                return Ok((width, height, rgba));
+                return rgba_from_pixel_buffer(&pixel_buffer);
             }
             Ok(Frame::Texture(_)) => {
                 bail!("display capturer returned a GPU texture frame; PNG screenshots require a pixel buffer");
@@ -113,22 +110,19 @@ fn capture_primary_rgba_scrap() -> Result<(usize, usize, Vec<u8>)> {
 
 #[cfg(windows)]
 fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
-    let (mut width, mut height, mut capturer) = create_windows_capturer()?;
+    let (_, _, mut capturer) = create_windows_capturer()?;
     let mut last_error = None;
 
     for _ in 0..CAPTURE_RETRIES {
         if crate::platform::windows::desktop_changed() {
             crate::platform::try_change_desktop();
-            let (next_width, next_height, next_capturer) = create_windows_capturer()?;
-            width = next_width;
-            height = next_height;
+            let (_, _, next_capturer) = create_windows_capturer()?;
             capturer = next_capturer;
         }
 
         match capturer.frame(Duration::from_millis(250)) {
             Ok(Frame::PixelBuffer(pixel_buffer)) => {
-                let rgba = rgba_from_pixel_buffer(&pixel_buffer)?;
-                return Ok((width, height, rgba));
+                return rgba_from_pixel_buffer(&pixel_buffer);
             }
             Ok(Frame::Texture(_)) => {
                 bail!("display capturer returned a GPU texture frame; PNG screenshots require a pixel buffer");
@@ -140,9 +134,7 @@ fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
             Err(err) => {
                 if crate::platform::windows::desktop_changed() {
                     crate::platform::try_change_desktop();
-                    let (next_width, next_height, next_capturer) = create_windows_capturer()?;
-                    width = next_width;
-                    height = next_height;
+                    let (_, _, next_capturer) = create_windows_capturer()?;
                     capturer = next_capturer;
                     last_error = Some(err);
                     thread::sleep(Duration::from_millis(50));
@@ -203,7 +195,9 @@ fn primary_windows_displays() -> Result<(usize, Vec<Display>)> {
     Ok((display_idx, displays))
 }
 
-fn rgba_from_pixel_buffer(pixel_buffer: &scrap::PixelBuffer<'_>) -> Result<Vec<u8>> {
+fn rgba_from_pixel_buffer(
+    pixel_buffer: &scrap::PixelBuffer<'_>,
+) -> Result<(usize, usize, Vec<u8>)> {
     let width = pixel_buffer.width();
     let height = pixel_buffer.height();
     let stride = pixel_buffer
@@ -213,15 +207,14 @@ fn rgba_from_pixel_buffer(pixel_buffer: &scrap::PixelBuffer<'_>) -> Result<Vec<u
         .context("invalid pixel buffer stride")?;
 
     if pixel_buffer.pixfmt() == Pixfmt::RGBA && stride == width * 4 {
-        return Ok(pixel_buffer.data().to_vec());
+        return Ok((width, height, pixel_buffer.data().to_vec()));
     }
 
     if pixel_buffer.pixfmt() == Pixfmt::BGRA {
-        return Ok(scrap::bgra_to_rgba(
-            pixel_buffer.data(),
+        return Ok((
             width,
             height,
-            stride,
+            scrap::bgra_to_rgba(pixel_buffer.data(), width, height, stride),
         ));
     }
 
@@ -229,7 +222,7 @@ fn rgba_from_pixel_buffer(pixel_buffer: &scrap::PixelBuffer<'_>) -> Result<Vec<u
     scrap::convert(pixel_buffer, Pixfmt::RGBA, &mut rgba)?;
 
     if stride == width * 4 || rgba.len() == width * height * 4 {
-        Ok(rgba)
+        Ok((width, height, rgba))
     } else {
         bail!(
             "unsupported pixel buffer stride after conversion: stride={stride}, width={width}, height={height}"
