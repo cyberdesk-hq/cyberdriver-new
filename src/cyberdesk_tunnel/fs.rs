@@ -13,6 +13,7 @@ use serde_json::Value;
 use std::{collections::HashMap, env, fs, io::Read, path::PathBuf};
 
 const MAX_READ_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_LIST_ENTRIES: usize = 20_000;
 
 #[derive(Debug, Serialize)]
 struct FsListEntry {
@@ -49,6 +50,9 @@ pub fn list(meta: &RequestMeta) -> Result<Vec<u8>> {
 
     let mut items = Vec::new();
     for entry in fs::read_dir(&safe_path).context("failed to list directory")? {
+        if items.len() >= MAX_LIST_ENTRIES {
+            bail!("directory has too many entries");
+        }
         let entry = entry.context("failed to read directory entry")?;
         let entry_path = entry.path();
         let metadata = entry.metadata().ok();
