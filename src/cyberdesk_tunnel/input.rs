@@ -281,17 +281,25 @@ fn parse_key_group(group: &str) -> Result<ParsedKeyGroup> {
 }
 
 fn special_key_group(group: &str) -> Option<ParsedKeyGroup> {
-    let mut tokens = group
+    let tokens = group
         .split('+')
         .map(normalize_key_token)
         .filter(|token| !token.is_empty())
         .collect::<Vec<_>>();
-    tokens.sort();
 
-    let is_ctrl_alt_del = tokens == ["alt", "ctrl", "delete"]
-        || tokens == ["alt", "ctrl", "del"]
-        || tokens == ["alt", "control", "delete"]
-        || tokens == ["alt", "control", "del"];
+    let is_ctrl_alt_del = tokens.len() == 3
+        && tokens
+            .iter()
+            .any(|token| matches!(modifier_key(token), Some(ControlKey::Control)))
+        && tokens
+            .iter()
+            .any(|token| matches!(modifier_key(token), Some(ControlKey::Alt)))
+        && tokens.iter().any(|token| {
+            matches!(
+                named_key(token),
+                Some(KeyToken::Control(ControlKey::Delete))
+            )
+        });
     if is_ctrl_alt_del {
         return Some(ParsedKeyGroup {
             modifiers: Vec::new(),
