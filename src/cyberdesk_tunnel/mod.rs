@@ -21,6 +21,7 @@ mod client;
 mod dispatch;
 mod display;
 mod framing;
+mod input;
 
 /// Entry point called from `src/server.rs::start_server` during
 /// service-mode bootstrap. Non-blocking — spawns a background task on
