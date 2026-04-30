@@ -242,6 +242,10 @@ fn parse_key_sequence(sequence: &str) -> Result<Vec<ParsedKeyGroup>> {
 }
 
 fn parse_key_group(group: &str) -> Result<ParsedKeyGroup> {
+    if let Some(special) = special_key_group(group) {
+        return Ok(special);
+    }
+
     let mut modifiers = Vec::new();
     let mut key = None;
 
@@ -274,6 +278,28 @@ fn parse_key_group(group: &str) -> Result<ParsedKeyGroup> {
     };
 
     Ok(ParsedKeyGroup { modifiers, key })
+}
+
+fn special_key_group(group: &str) -> Option<ParsedKeyGroup> {
+    let mut tokens = group
+        .split('+')
+        .map(normalize_key_token)
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    tokens.sort();
+
+    let is_ctrl_alt_del = tokens == ["alt", "ctrl", "delete"]
+        || tokens == ["alt", "ctrl", "del"]
+        || tokens == ["alt", "control", "delete"]
+        || tokens == ["alt", "control", "del"];
+    if is_ctrl_alt_del {
+        return Some(ParsedKeyGroup {
+            modifiers: Vec::new(),
+            key: KeyToken::Control(ControlKey::CtrlAltDel),
+        });
+    }
+
+    None
 }
 
 fn normalize_key_token(raw: &str) -> String {
@@ -312,6 +338,10 @@ fn named_key(token: &str) -> Option<KeyToken> {
         "arrow_right" | "right_arrow" | "right" => ControlKey::RightArrow,
         "caps_lock" | "capslock" => ControlKey::CapsLock,
         "num_lock" | "numlock" => ControlKey::NumLock,
+        "ctrl_alt_del" | "ctrlaltdel" | "ctrl_alt_delete" | "ctrlaltdelete" => {
+            ControlKey::CtrlAltDel
+        }
+        "lock_screen" | "lockscreen" => ControlKey::LockScreen,
         "f1" => ControlKey::F1,
         "f2" => ControlKey::F2,
         "f3" => ControlKey::F3,
