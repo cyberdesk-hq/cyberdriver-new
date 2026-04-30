@@ -75,155 +75,156 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
     //   text(meta JSON)  ->  [binary chunks]  ->  text("end")
     let mut pending_meta: Option<RequestMeta> = None;
     let mut pending_body: Vec<u8> = Vec::new();
-    let (response_tx, mut response_rx) =
-        tokio::sync::mpsc::unbounded_channel::<(RequestMeta, (u16, Vec<u8>, &'static str))>();
 
     loop {
-        tokio::select! {
-            maybe_msg = read.next() => {
-                let msg = match maybe_msg {
-                    Some(msg) => msg.context("WebSocket read error")?,
-                    None => break,
-                };
+        let msg = match read.next().await {
+            Some(msg) => msg.context("WebSocket read error")?,
+            None => break,
+        };
 
-                match msg {
-                    Message::Text(text) => {
-                        let text_str = text.as_str();
+        match msg {
+            Message::Text(text) => {
+                let text_str = text.as_str();
 
-                        if text_str == "end" {
-                            let meta = match pending_meta.take() {
-                                Some(m) => m,
-                                None => {
-                                    log::warn!(
-                                        "cyberdesk_tunnel: received 'end' with no pending request \
-                                         metadata; ignoring"
-                                    );
-                                    continue;
-                                }
-                            };
-                            let body = std::mem::take(&mut pending_body);
-                            let response_tx = response_tx.clone();
-                            let _ = tokio::task::spawn_blocking(move || {
-                                let response = dispatch::dispatch(&meta, &body);
-                                if response_tx.send((meta, response)).is_err() {
-                                    log::warn!(
-                                        "cyberdesk_tunnel: dispatch response dropped; read loop ended"
-                                    );
-                                }
-                            });
-                        } else {
-                            if pending_meta.is_some() {
-                                log::warn!(
-                                    "cyberdesk_tunnel: new request metadata while previous request was \
-                                     still in flight; discarding partial body and starting over (cloud \
-                                     wire-protocol error)"
-                                );
-                                pending_meta = None;
-                                pending_body.clear();
-                            }
-
-                            let meta: RequestMeta = match serde_json::from_str(text_str) {
-                                Ok(meta) => meta,
-                                Err(err) => {
-                                    log::warn!(
-                                        "cyberdesk_tunnel: invalid request metadata JSON: {}; \
-                                         ignoring ({err})",
-                                        text_str
-                                    );
-                                    continue;
-                                }
-                            };
-                            pending_meta = Some(meta);
-                        }
-                    }
-
-                    Message::Binary(data) => {
-                        if pending_meta.is_none() {
+                if text_str == "end" {
+                    let meta = match pending_meta.take() {
+                        Some(m) => m,
+                        None => {
                             log::warn!(
-                                "cyberdesk_tunnel: received {} bytes binary data with no pending \
-                                 request metadata; dropping",
-                                data.len()
+                                "cyberdesk_tunnel: received 'end' with no pending request \
+                                 metadata; ignoring"
                             );
                             continue;
                         }
-                        pending_body.extend_from_slice(&data);
-                    }
-
-                    Message::Close(frame) => {
-                        if let Some(f) = &frame {
-                            let code = u16::from(f.code);
-                            log::info!(
-                                "cyberdesk_tunnel: server closed connection: code={} reason={:?}",
-                                code,
-                                f.reason
-                            );
-                            // 4001 = auth (no retry), 4008 = rate limit
-                            // (M7 will distinguish).
-                            if let Err(err) = write.send(Message::Close(frame.clone())).await {
-                                log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
+                    };
+                    let body = std::mem::take(&mut pending_body);
+                    let method = meta.method.clone();
+                    let path = meta.path.clone();
+                    let request_id = meta.request_id.clone();
+                    let (status, response_body, content_type) =
+                        match tokio::task::spawn_blocking(move || dispatch::dispatch(&meta, &body))
+                            .await
+                        {
+                            Ok(response) => response,
+                            Err(err) => {
+                                log::error!("cyberdesk_tunnel: dispatch task failed: {err}");
+                                (
+                                    500,
+                                    br#"{"error":"cyberdesk_tunnel dispatch failed"}"#.to_vec(),
+                                    "application/json",
+                                )
                             }
-                            if code == 4001 {
-                                bail!("cyberdesk_tunnel: server rejected auth (close 4001); refusing to retry");
-                            }
-                        } else {
-                            log::info!("cyberdesk_tunnel: server closed connection (no close frame)");
-                            if let Err(err) = write.send(Message::Close(None)).await {
-                                log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
-                            }
-                        }
-                        break;
-                    }
+                        };
 
-                    Message::Ping(payload) => {
-                        // tungstenite auto-pongs by default but be explicit.
-                        let _ = write.send(Message::Pong(payload)).await;
-                    }
+                    log::info!(
+                        "cyberdesk_tunnel: {} {} -> {} ({} bytes, request_id={})",
+                        method,
+                        path,
+                        status,
+                        response_body.len(),
+                        request_id
+                    );
 
-                    Message::Pong(_) | Message::Frame(_) => {}
-                }
-            }
+                    let mut response_headers = HashMap::new();
+                    response_headers.insert("Content-Type".to_string(), content_type.to_string());
+                    response_headers.insert(
+                        "Content-Length".to_string(),
+                        response_body.len().to_string(),
+                    );
 
-            Some((meta, (status, response_body, content_type))) = response_rx.recv() => {
-                log::info!(
-                    "cyberdesk_tunnel: {} {} -> {} ({} bytes, request_id={})",
-                    meta.method,
-                    meta.path,
-                    status,
-                    response_body.len(),
-                    meta.request_id
-                );
+                    let resp_meta = ResponseMeta {
+                        status,
+                        headers: response_headers,
+                        request_id,
+                    };
 
-                let mut response_headers = HashMap::new();
-                response_headers
-                    .insert("Content-Type".to_string(), content_type.to_string());
-                response_headers
-                    .insert("Content-Length".to_string(), response_body.len().to_string());
-
-                let resp_meta = ResponseMeta {
-                    status,
-                    headers: response_headers,
-                    request_id: meta.request_id,
-                };
-
-                let resp_meta_json = serde_json::to_string(&resp_meta)
-                    .context("serializing response metadata")?;
-                write
-                    .send(Message::Text(resp_meta_json.into()))
-                    .await
-                    .context("sending response metadata frame")?;
-
-                if !response_body.is_empty() {
+                    let resp_meta_json = serde_json::to_string(&resp_meta)
+                        .context("serializing response metadata")?;
                     write
-                        .send(Message::Binary(response_body.into()))
+                        .send(Message::Text(resp_meta_json.into()))
                         .await
-                        .context("sending response body binary frame")?;
-                }
+                        .context("sending response metadata frame")?;
 
-                write
-                    .send(Message::Text("end".into()))
-                    .await
-                    .context("sending response 'end' sentinel")?;
+                    if !response_body.is_empty() {
+                        write
+                            .send(Message::Binary(response_body.into()))
+                            .await
+                            .context("sending response body binary frame")?;
+                    }
+
+                    write
+                        .send(Message::Text("end".into()))
+                        .await
+                        .context("sending response 'end' sentinel")?;
+                } else {
+                    if pending_meta.is_some() {
+                        log::warn!(
+                            "cyberdesk_tunnel: new request metadata while previous request was \
+                             still in flight; discarding partial body and starting over (cloud \
+                             wire-protocol error)"
+                        );
+                        pending_meta = None;
+                        pending_body.clear();
+                    }
+
+                    let meta: RequestMeta = match serde_json::from_str(text_str) {
+                        Ok(meta) => meta,
+                        Err(err) => {
+                            log::warn!(
+                                "cyberdesk_tunnel: invalid request metadata JSON: {}; \
+                                 ignoring ({err})",
+                                text_str
+                            );
+                            continue;
+                        }
+                    };
+                    pending_meta = Some(meta);
+                }
             }
+
+            Message::Binary(data) => {
+                if pending_meta.is_none() {
+                    log::warn!(
+                        "cyberdesk_tunnel: received {} bytes binary data with no pending \
+                         request metadata; dropping",
+                        data.len()
+                    );
+                    continue;
+                }
+                pending_body.extend_from_slice(&data);
+            }
+
+            Message::Close(frame) => {
+                if let Some(f) = &frame {
+                    let code = u16::from(f.code);
+                    log::info!(
+                        "cyberdesk_tunnel: server closed connection: code={} reason={:?}",
+                        code,
+                        f.reason
+                    );
+                    // 4001 = auth (no retry), 4008 = rate limit
+                    // (M7 will distinguish).
+                    if let Err(err) = write.send(Message::Close(frame.clone())).await {
+                        log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
+                    }
+                    if code == 4001 {
+                        bail!("cyberdesk_tunnel: server rejected auth (close 4001); refusing to retry");
+                    }
+                } else {
+                    log::info!("cyberdesk_tunnel: server closed connection (no close frame)");
+                    if let Err(err) = write.send(Message::Close(None)).await {
+                        log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
+                    }
+                }
+                break;
+            }
+
+            Message::Ping(payload) => {
+                // tungstenite auto-pongs by default but be explicit.
+                let _ = write.send(Message::Pong(payload)).await;
+            }
+
+            Message::Pong(_) | Message::Frame(_) => {}
         }
     }
 
