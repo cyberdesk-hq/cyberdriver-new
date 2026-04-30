@@ -15,7 +15,9 @@
 
 use hbb_common::anyhow::{bail, Context, Result};
 use image::{imageops::FilterType, DynamicImage, ImageOutputFormat, RgbaImage};
-use scrap::{Capturer, Display, Frame, Pixfmt, TraitCapturer, TraitPixelBuffer};
+#[cfg(not(windows))]
+use scrap::Capturer;
+use scrap::{Display, Frame, Pixfmt, TraitCapturer, TraitPixelBuffer};
 use std::{
     io::{self, Cursor},
     thread,
@@ -52,6 +54,18 @@ fn primary_display() -> Result<Display> {
 }
 
 fn capture_primary_rgba() -> Result<(usize, usize, Vec<u8>)> {
+    #[cfg(windows)]
+    {
+        capture_primary_rgba_windows()
+    }
+    #[cfg(not(windows))]
+    {
+        capture_primary_rgba_scrap()
+    }
+}
+
+#[cfg(not(windows))]
+fn capture_primary_rgba_scrap() -> Result<(usize, usize, Vec<u8>)> {
     let display = primary_display()?;
     let mut capturer = Capturer::new(display).context("failed to create display capturer")?;
     let width = capturer.width();
@@ -82,6 +96,88 @@ fn capture_primary_rgba() -> Result<(usize, usize, Vec<u8>)> {
         Some(err) => Err(err).context("screen capture failed after retries"),
         None => bail!("screen capture failed after retries"),
     }
+}
+
+#[cfg(windows)]
+fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
+    let (width, height, mut capturer) = create_windows_capturer()?;
+    let mut last_error = None;
+
+    for _ in 0..CAPTURE_RETRIES {
+        if crate::platform::windows::desktop_changed() {
+            crate::platform::try_change_desktop();
+            let (_, _, next_capturer) = create_windows_capturer()?;
+            capturer = next_capturer;
+        }
+
+        match capturer.frame(Duration::from_millis(250)) {
+            Ok(Frame::PixelBuffer(pixel_buffer)) => {
+                let rgba = rgba_from_pixel_buffer(&pixel_buffer)?;
+                return Ok((width, height, rgba));
+            }
+            Ok(Frame::Texture(_)) => {
+                bail!("display capturer returned a GPU texture frame; PNG screenshots require a pixel buffer");
+            }
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                last_error = Some(err);
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => {
+                if crate::platform::windows::desktop_changed() {
+                    crate::platform::try_change_desktop();
+                    let (_, _, next_capturer) = create_windows_capturer()?;
+                    capturer = next_capturer;
+                    last_error = Some(err);
+                    thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+
+                if !capturer.is_gdi() && capturer.set_gdi() {
+                    last_error = Some(err);
+                    thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+
+                last_error = Some(err);
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+
+    match last_error {
+        Some(err) => Err(err).context("screen capture failed after retries"),
+        None => bail!("screen capture failed after retries"),
+    }
+}
+
+#[cfg(windows)]
+fn create_windows_capturer() -> Result<(usize, usize, Box<dyn TraitCapturer>)> {
+    let mut displays = crate::display_service::try_get_displays_add_amyuni_headless()
+        .context("failed to enumerate displays")?;
+    let display_idx = crate::display_service::get_primary_2(&displays);
+    if displays.len() <= display_idx {
+        bail!(
+            "failed to get display {display_idx}; displays len: {}",
+            displays.len()
+        );
+    }
+
+    let display = displays.remove(display_idx);
+    let width = display.width();
+    let height = display.height();
+    let portable_service_running = crate::portable_service::client::running();
+    let mut capturer = crate::portable_service::client::create_capturer(
+        display_idx,
+        display,
+        portable_service_running,
+    )
+    .context("failed to create Windows service-compatible capturer")?;
+
+    if !scrap::codec::enable_directx_capture() && !capturer.is_gdi() {
+        capturer.set_gdi();
+    }
+
+    Ok((width, height, capturer))
 }
 
 fn rgba_from_pixel_buffer(pixel_buffer: &scrap::PixelBuffer<'_>) -> Result<Vec<u8>> {
