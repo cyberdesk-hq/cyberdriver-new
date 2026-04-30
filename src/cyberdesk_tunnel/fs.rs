@@ -10,7 +10,7 @@ use super::framing::RequestMeta;
 use hbb_common::anyhow::{bail, Context, Result};
 use serde::Serialize;
 use serde_json::Value;
-use std::{collections::HashMap, env, fs, path::PathBuf};
+use std::{collections::HashMap, env, fs, io::Read, path::PathBuf};
 
 const MAX_READ_BYTES: u64 = 100 * 1024 * 1024;
 
@@ -87,12 +87,15 @@ pub fn read(meta: &RequestMeta) -> Result<Vec<u8>> {
         bail!("path is not a file");
     }
 
-    let metadata = fs::metadata(&safe_path).context("failed to stat file")?;
-    if metadata.len() > MAX_READ_BYTES {
+    let file = fs::File::open(&safe_path).context("failed to open file")?;
+    let mut content = Vec::new();
+    file.take(MAX_READ_BYTES + 1)
+        .read_to_end(&mut content)
+        .context("failed to read file")?;
+    if content.len() as u64 > MAX_READ_BYTES {
         bail!("file too large (>100MB)");
     }
 
-    let content = fs::read(&safe_path).context("failed to read file")?;
     Ok(serde_json::to_vec(&FsReadResponse {
         path: safe_path.display().to_string(),
         content: hbb_common::base64::encode(&content),
