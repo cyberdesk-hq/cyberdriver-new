@@ -16,6 +16,7 @@ use serde_json::json;
 use std::{thread, time::Duration};
 
 const CYBERDESK_TUNNEL_CONN_ID: i32 = 0;
+const MAX_INPUT_BODY_BYTES: usize = 64 * 1024;
 const KEY_TAP_DELAY: Duration = Duration::from_millis(20);
 const MOUSE_CLICK_DELAY: Duration = Duration::from_millis(35);
 
@@ -410,6 +411,12 @@ fn scroll_delta(direction: &str, amount: i32) -> Result<(i32, i32)> {
 fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
     if body.is_empty() {
         bail!("missing JSON request body");
+    }
+    if body.len() > MAX_INPUT_BODY_BYTES {
+        bail!(
+            "input request body exceeds {} byte limit",
+            MAX_INPUT_BODY_BYTES
+        );
     }
     Ok(serde_json::from_slice(body).context("invalid JSON request body")?)
 }
