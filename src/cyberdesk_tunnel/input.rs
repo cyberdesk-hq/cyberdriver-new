@@ -8,18 +8,25 @@
 // secure-desktop behavior that lets RustDesk control the login screen.
 
 use hbb_common::{
-    anyhow::{bail, Context, Result},
+    anyhow::{bail, Context, Error, Result},
     message_proto::{key_event, ControlKey, KeyEvent, KeyboardMode, MouseEvent},
 };
 use serde_derive::Deserialize;
 use serde_json::json;
-use std::{thread, time::Duration};
+use std::{fmt, thread, time::Duration};
 
 const CYBERDESK_TUNNEL_CONN_ID: i32 = 0;
 const MAX_INPUT_BODY_BYTES: usize = 64 * 1024;
 const MAX_KEY_GROUPS: usize = 64;
 const KEY_TAP_DELAY: Duration = Duration::from_millis(20);
 const MOUSE_CLICK_DELAY: Duration = Duration::from_millis(35);
+const CLIPBOARD_RETRY_ATTEMPTS: usize = 8;
+const CLIPBOARD_INITIAL_DELAY: Duration = Duration::from_millis(200);
+const CLIPBOARD_RETRY_STEP: Duration = Duration::from_millis(100);
+#[cfg(target_os = "macos")]
+const COPY_KEY_GROUP: &str = "meta+c";
+#[cfg(not(target_os = "macos"))]
+const COPY_KEY_GROUP: &str = "ctrl+c";
 
 #[derive(Debug, Deserialize)]
 struct MouseMoveRequest {
@@ -68,6 +75,11 @@ struct KeyboardKeyRequest {
     down: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CopyToClipboardRequest {
+    text: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum KeyToken {
     Char(char),
@@ -77,6 +89,42 @@ enum KeyToken {
 struct ParsedKeyGroup {
     modifiers: Vec<ControlKey>,
     key: KeyToken,
+}
+
+#[derive(Debug)]
+pub struct ClipboardEndpointError {
+    status: u16,
+    source: Error,
+}
+
+impl ClipboardEndpointError {
+    fn bad_request(source: Error) -> Self {
+        Self {
+            status: 400,
+            source,
+        }
+    }
+
+    fn server(source: Error) -> Self {
+        Self {
+            status: 500,
+            source,
+        }
+    }
+
+    pub fn status(&self) -> u16 {
+        self.status
+    }
+}
+
+impl fmt::Display for ClipboardEndpointError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            write!(f, "{:#}", self.source)
+        } else {
+            write!(f, "{}", self.source)
+        }
+    }
 }
 
 pub fn mouse_position() -> Result<Vec<u8>> {
@@ -203,6 +251,31 @@ pub fn keyboard_key(body: &[u8]) -> Result<Vec<u8>> {
     }
 
     empty_json()
+}
+
+pub fn copy_to_clipboard(body: &[u8]) -> std::result::Result<Vec<u8>, ClipboardEndpointError> {
+    let request: CopyToClipboardRequest =
+        parse_json(body).map_err(ClipboardEndpointError::bad_request)?;
+    let key_name = request.text.trim();
+    if key_name.is_empty() {
+        return Err(ClipboardEndpointError::bad_request(Error::msg(
+            "missing 'text' field (key name)",
+        )));
+    }
+
+    clear_text_clipboard()
+        .context("failed to clear text clipboard before copy")
+        .map_err(ClipboardEndpointError::server)?;
+
+    let copy_group = parse_key_group(COPY_KEY_GROUP).map_err(ClipboardEndpointError::server)?;
+    send_key_group(&copy_group, true);
+    thread::sleep(KEY_TAP_DELAY);
+    send_key_group(&copy_group, false);
+
+    let clipboard_content = read_text_clipboard_with_retries();
+    serde_json::to_vec(&json!({ key_name: clipboard_content }))
+        .context("failed to serialize clipboard response")
+        .map_err(ClipboardEndpointError::server)
 }
 
 fn send_mouse(event_type: i32, button: i32, x: i32, y: i32) {
@@ -423,6 +496,34 @@ fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
         );
     }
     Ok(serde_json::from_slice(body).context("invalid JSON request body")?)
+}
+
+fn clear_text_clipboard() -> Result<()> {
+    let mut clipboard = arboard::Clipboard::new().context("failed to open clipboard")?;
+    clipboard
+        .set_text(String::new())
+        .context("failed to replace clipboard contents")?;
+    Ok(())
+}
+
+fn read_text_clipboard_with_retries() -> String {
+    for attempt in 0..CLIPBOARD_RETRY_ATTEMPTS {
+        let delay = if attempt == 0 {
+            CLIPBOARD_INITIAL_DELAY
+        } else {
+            CLIPBOARD_RETRY_STEP
+        };
+        thread::sleep(delay);
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            if let Ok(text) = clipboard.get_text() {
+                if !text.is_empty() {
+                    return text;
+                }
+            }
+        }
+    }
+
+    String::new()
 }
 
 fn empty_json() -> Result<Vec<u8>> {
