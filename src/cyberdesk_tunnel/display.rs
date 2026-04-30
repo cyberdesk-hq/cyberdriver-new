@@ -55,16 +55,7 @@ fn primary_display() -> Result<Display> {
 
 #[cfg(windows)]
 fn primary_dimensions() -> Result<(usize, usize)> {
-    let displays = crate::display_service::try_get_displays_add_amyuni_headless()
-        .context("failed to enumerate displays")?;
-    let display_idx = crate::display_service::get_primary_2(&displays);
-    if displays.len() <= display_idx {
-        bail!(
-            "failed to get display {display_idx}; displays len: {}",
-            displays.len()
-        );
-    }
-
+    let (display_idx, displays) = primary_windows_displays()?;
     let display = &displays[display_idx];
     Ok((display.width(), display.height()))
 }
@@ -178,16 +169,7 @@ fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
 
 #[cfg(windows)]
 fn create_windows_capturer() -> Result<(usize, usize, Box<dyn TraitCapturer>)> {
-    let mut displays = crate::display_service::try_get_displays_add_amyuni_headless()
-        .context("failed to enumerate displays")?;
-    let display_idx = crate::display_service::get_primary_2(&displays);
-    if displays.len() <= display_idx {
-        bail!(
-            "failed to get display {display_idx}; displays len: {}",
-            displays.len()
-        );
-    }
-
+    let (display_idx, mut displays) = primary_windows_displays()?;
     let display = displays.remove(display_idx);
     let width = display.width();
     let height = display.height();
@@ -204,6 +186,21 @@ fn create_windows_capturer() -> Result<(usize, usize, Box<dyn TraitCapturer>)> {
     }
 
     Ok((width, height, capturer))
+}
+
+#[cfg(windows)]
+fn primary_windows_displays() -> Result<(usize, Vec<Display>)> {
+    let displays = crate::display_service::try_get_displays_add_amyuni_headless()
+        .context("failed to enumerate displays")?;
+    let display_idx = crate::display_service::get_primary_2(&displays);
+    if displays.len() <= display_idx {
+        bail!(
+            "failed to get display {display_idx}; displays len: {}",
+            displays.len()
+        );
+    }
+
+    Ok((display_idx, displays))
 }
 
 fn rgba_from_pixel_buffer(pixel_buffer: &scrap::PixelBuffer<'_>) -> Result<Vec<u8>> {
