@@ -13,8 +13,11 @@
 // The wire protocol is owned by `framing.rs`; this module just runs
 // the WebSocket and the request<->response loop.
 
-use super::dispatch::{self, ReverseTunnelRequest};
-use super::framing::{RequestMeta, ResponseMeta};
+use super::{
+    dispatch::{self, ReverseTunnelRequest},
+    framing::{RequestMeta, ResponseMeta},
+    path_without_query,
+};
 
 use futures_util::{SinkExt, StreamExt};
 use hbb_common::anyhow::{anyhow, bail, Context, Result};
@@ -247,10 +250,6 @@ fn log_path(path: &str) -> String {
         return route.to_string();
     }
     path.to_string()
-}
-
-fn path_without_query(path: &str) -> &str {
-    path.split_once('?').map(|(path, _)| path).unwrap_or(path)
 }
 
 fn is_filesystem_route(route: &str) -> bool {

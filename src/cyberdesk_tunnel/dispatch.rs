@@ -20,7 +20,7 @@
 // the caller can clearly tell "your tunnel is alive, this endpoint is
 // just not implemented yet" from "the tunnel is broken."
 
-use super::{display, framing::RequestMeta, fs, input};
+use super::{display, framing::RequestMeta, fs, input, path_without_query};
 use serde_json::json;
 
 /// Request provenance marker for routes that must only be reachable through the
@@ -85,11 +85,11 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(err.status(), format!("copy to clipboard failed: {err:#}")),
         },
-        ("GET", "/computer/fs/list") => match fs::list(meta) {
+        ("GET", "/computer/fs/list" | "computer/fs/list") => match fs::list(meta) {
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(400, format!("fs list failed: {err:#}")),
         },
-        ("GET", "/computer/fs/read") => match fs::read(meta) {
+        ("GET", "/computer/fs/read" | "computer/fs/read") => match fs::read(meta) {
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(400, format!("fs read failed: {err:#}")),
         },
@@ -99,10 +99,6 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
             "application/json",
         ),
     }
-}
-
-fn path_without_query(path: &str) -> &str {
-    path.split_once('?').map(|(path, _)| path).unwrap_or(path)
 }
 
 fn json_error(status: u16, message: String) -> (u16, Vec<u8>, &'static str) {
