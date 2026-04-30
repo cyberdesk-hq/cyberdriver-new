@@ -106,7 +106,7 @@ pub fn read(meta: &RequestMeta) -> Result<Vec<u8>> {
 fn resolve_path(raw: &str) -> Result<PathBuf> {
     let expanded = expand_home(raw);
     let path = PathBuf::from(expanded);
-    Ok(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+    path.canonicalize().context("failed to resolve path")
 }
 
 fn expand_home(raw: &str) -> String {
