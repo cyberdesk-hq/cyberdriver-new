@@ -8,9 +8,11 @@
 //   GET /computer/display/screenshot
 // M6 handles the first input slice:
 //   M6: POST /computer/input/{mouse,keyboard} (libs/enigo)
+// M7 handles the first read-only filesystem slice:
+//   GET /computer/fs/list
+//   GET /computer/fs/read
 // Future milestones add:
-//       POST /computer/copy_to_clipboard      (libs/clipboard)
-//   M7: GET/POST /computer/fs/*               (tokio::fs)
+//       POST /computer/fs/write               (tokio::fs)
 //       POST /computer/shell/powershell/*     (tokio::process)
 //       /internal/{shutdown,diagnostics,update,keepalive/*}
 //
@@ -18,13 +20,31 @@
 // the caller can clearly tell "your tunnel is alive, this endpoint is
 // just not implemented yet" from "the tunnel is broken."
 
-use super::{display, framing::RequestMeta, input};
+use super::{display, framing::RequestMeta, fs, input, path_without_query};
 use serde_json::json;
 
-/// Route a single request to its handler. `body` is the accumulated
-/// inbound binary body (may be empty).
-pub fn dispatch(meta: &RequestMeta, body: &[u8]) -> (u16, Vec<u8>, &'static str) {
-    match (meta.method.as_str(), meta.path.as_str()) {
+/// Request provenance marker for routes that must only be reachable through the
+/// authenticated Cyberdesk cloud WebSocket. This module is not wired to any
+/// localhost HTTP listener; keeping the dispatcher behind this wrapper makes
+/// accidental reuse from a local server a compile-time-visible decision.
+pub(super) struct ReverseTunnelRequest<'a> {
+    meta: &'a RequestMeta,
+    body: &'a [u8],
+}
+
+impl<'a> ReverseTunnelRequest<'a> {
+    pub(super) fn from_websocket_frames(meta: &'a RequestMeta, body: &'a [u8]) -> Self {
+        Self { meta, body }
+    }
+}
+
+/// Route a single reverse-tunnel request to its handler. `body` is the
+/// accumulated inbound binary body (may be empty).
+pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'static str) {
+    let meta = request.meta;
+    let body = request.body;
+    let path = path_without_query(&meta.path);
+    match (meta.method.as_str(), path) {
         ("GET", "/computer/display/dimensions") => match display::dimensions() {
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(500, format!("display dimensions failed: {err:#}")),
@@ -64,6 +84,14 @@ pub fn dispatch(meta: &RequestMeta, body: &[u8]) -> (u16, Vec<u8>, &'static str)
         ("POST", "/computer/copy_to_clipboard") => match input::copy_to_clipboard(body) {
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(err.status(), format!("copy to clipboard failed: {err:#}")),
+        },
+        ("GET", "/computer/fs/list" | "computer/fs/list") => match fs::list(meta) {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(400, format!("fs list failed: {err:#}")),
+        },
+        ("GET", "/computer/fs/read" | "computer/fs/read") => match fs::read(meta) {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(400, format!("fs read failed: {err:#}")),
         },
         _ => (
             501,

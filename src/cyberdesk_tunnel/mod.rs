@@ -21,7 +21,12 @@ mod client;
 mod dispatch;
 mod display;
 mod framing;
+mod fs;
 mod input;
+
+fn path_without_query(path: &str) -> &str {
+    path.split_once('?').map(|(path, _)| path).unwrap_or(path)
+}
 
 /// Entry point called from `src/server.rs::start_server` during
 /// service-mode bootstrap. Non-blocking — spawns a background task on

@@ -13,8 +13,11 @@
 // The wire protocol is owned by `framing.rs`; this module just runs
 // the WebSocket and the request<->response loop.
 
-use super::dispatch;
-use super::framing::{RequestMeta, ResponseMeta};
+use super::{
+    dispatch::{self, ReverseTunnelRequest},
+    framing::{RequestMeta, ResponseMeta},
+    path_without_query,
+};
 
 use futures_util::{SinkExt, StreamExt};
 use hbb_common::anyhow::{anyhow, bail, Context, Result};
@@ -99,11 +102,14 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     };
                     let body = std::mem::take(&mut pending_body);
                     let method = meta.method.clone();
-                    let path = meta.path.clone();
+                    let log_path = log_path(&meta.path);
                     let request_id = meta.request_id.clone();
                     let (status, response_body, content_type) =
-                        match tokio::task::spawn_blocking(move || dispatch::dispatch(&meta, &body))
-                            .await
+                        match tokio::task::spawn_blocking(move || {
+                            let request = ReverseTunnelRequest::from_websocket_frames(&meta, &body);
+                            dispatch::dispatch(request)
+                        })
+                        .await
                         {
                             Ok(response) => response,
                             Err(err) => {
@@ -119,7 +125,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     log::info!(
                         "cyberdesk_tunnel: {} {} -> {} ({} bytes, request_id={})",
                         method,
-                        path,
+                        log_path,
                         status,
                         response_body.len(),
                         request_id
@@ -236,4 +242,48 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
 /// only for cloud-side display (`Machine.hostname` column).
 fn hostname() -> String {
     crate::common::hostname()
+}
+
+fn log_path(path: &str) -> String {
+    let route = path_without_query(path);
+    if is_filesystem_route(route) {
+        return route.to_string();
+    }
+    path.to_string()
+}
+
+fn is_filesystem_route(route: &str) -> bool {
+    matches!(
+        route,
+        "/computer/fs/list" | "/computer/fs/read" | "computer/fs/list" | "computer/fs/read"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::log_path;
+
+    #[test]
+    fn log_path_redacts_filesystem_query() {
+        assert_eq!(
+            log_path("/computer/fs/read?path=/home/alice/.ssh/id_rsa"),
+            "/computer/fs/read"
+        );
+    }
+
+    #[test]
+    fn log_path_redacts_legacy_filesystem_query() {
+        assert_eq!(
+            log_path("computer/fs/list?path=/home/alice"),
+            "computer/fs/list"
+        );
+    }
+
+    #[test]
+    fn log_path_preserves_non_filesystem_query() {
+        assert_eq!(
+            log_path("/computer/display/screenshot?format=png"),
+            "/computer/display/screenshot?format=png"
+        );
+    }
 }
