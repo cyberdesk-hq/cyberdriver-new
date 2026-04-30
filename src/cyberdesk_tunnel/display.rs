@@ -29,10 +29,10 @@ const DEFAULT_SCREENSHOT_HEIGHT: u32 = 768;
 const CAPTURE_RETRIES: usize = 3;
 
 pub fn dimensions() -> Result<Vec<u8>> {
-    let display = primary_display()?;
+    let (width, height) = primary_dimensions()?;
     Ok(serde_json::to_vec(&serde_json::json!({
-        "width": display.width(),
-        "height": display.height(),
+        "width": width,
+        "height": height,
     }))?)
 }
 
@@ -51,6 +51,28 @@ fn primary_display() -> Result<Display> {
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no displays found"))
         })
         .context("failed to get primary display")
+}
+
+#[cfg(windows)]
+fn primary_dimensions() -> Result<(usize, usize)> {
+    let displays = crate::display_service::try_get_displays_add_amyuni_headless()
+        .context("failed to enumerate displays")?;
+    let display_idx = crate::display_service::get_primary_2(&displays);
+    if displays.len() <= display_idx {
+        bail!(
+            "failed to get display {display_idx}; displays len: {}",
+            displays.len()
+        );
+    }
+
+    let display = &displays[display_idx];
+    Ok((display.width(), display.height()))
+}
+
+#[cfg(not(windows))]
+fn primary_dimensions() -> Result<(usize, usize)> {
+    let display = primary_display()?;
+    Ok((display.width(), display.height()))
 }
 
 fn capture_primary_rgba() -> Result<(usize, usize, Vec<u8>)> {
@@ -100,13 +122,15 @@ fn capture_primary_rgba_scrap() -> Result<(usize, usize, Vec<u8>)> {
 
 #[cfg(windows)]
 fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
-    let (width, height, mut capturer) = create_windows_capturer()?;
+    let (mut width, mut height, mut capturer) = create_windows_capturer()?;
     let mut last_error = None;
 
     for _ in 0..CAPTURE_RETRIES {
         if crate::platform::windows::desktop_changed() {
             crate::platform::try_change_desktop();
-            let (_, _, next_capturer) = create_windows_capturer()?;
+            let (next_width, next_height, next_capturer) = create_windows_capturer()?;
+            width = next_width;
+            height = next_height;
             capturer = next_capturer;
         }
 
@@ -125,7 +149,9 @@ fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
             Err(err) => {
                 if crate::platform::windows::desktop_changed() {
                     crate::platform::try_change_desktop();
-                    let (_, _, next_capturer) = create_windows_capturer()?;
+                    let (next_width, next_height, next_capturer) = create_windows_capturer()?;
+                    width = next_width;
+                    height = next_height;
                     capturer = next_capturer;
                     last_error = Some(err);
                     thread::sleep(Duration::from_millis(50));
