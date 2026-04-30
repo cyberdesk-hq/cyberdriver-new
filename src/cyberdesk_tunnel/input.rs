@@ -23,6 +23,10 @@ const MOUSE_CLICK_DELAY: Duration = Duration::from_millis(35);
 const CLIPBOARD_RETRY_ATTEMPTS: usize = 8;
 const CLIPBOARD_INITIAL_DELAY: Duration = Duration::from_millis(200);
 const CLIPBOARD_RETRY_STEP: Duration = Duration::from_millis(100);
+#[cfg(target_os = "macos")]
+const COPY_KEY_GROUP: &str = "meta+c";
+#[cfg(not(target_os = "macos"))]
+const COPY_KEY_GROUP: &str = "ctrl+c";
 
 #[derive(Debug, Deserialize)]
 struct MouseMoveRequest {
@@ -222,7 +226,7 @@ pub fn copy_to_clipboard(body: &[u8]) -> Result<Vec<u8>> {
 
     clear_text_clipboard().context("failed to clear text clipboard before copy")?;
 
-    let copy_group = parse_key_group("ctrl+c")?;
+    let copy_group = parse_key_group(COPY_KEY_GROUP)?;
     send_key_group(&copy_group, true);
     thread::sleep(KEY_TAP_DELAY);
     send_key_group(&copy_group, false);
