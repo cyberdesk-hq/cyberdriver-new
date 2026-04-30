@@ -63,7 +63,7 @@ pub fn dispatch(meta: &RequestMeta, body: &[u8]) -> (u16, Vec<u8>, &'static str)
         },
         ("POST", "/computer/copy_to_clipboard") => match input::copy_to_clipboard(body) {
             Ok(body) => (200, body, "application/json"),
-            Err(err) => json_error(400, format!("copy to clipboard failed: {err:#}")),
+            Err(err) => json_error(err.status(), format!("copy to clipboard failed: {err:#}")),
         },
         _ => (
             501,
