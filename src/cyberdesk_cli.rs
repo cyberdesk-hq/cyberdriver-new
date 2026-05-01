@@ -144,7 +144,10 @@ fn run_join(join: JoinCommand) {
         std::process::exit(2);
     }
 
-    crate::cyberdesk_tunnel::store_configured_api_key(join.secret);
+    if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(join.secret) {
+        eprintln!("error: {message}");
+        std::process::exit(2);
+    }
     if let Some(api_base) = join.api_base {
         crate::cyberdesk_tunnel::store_configured_api_base(api_base);
     }

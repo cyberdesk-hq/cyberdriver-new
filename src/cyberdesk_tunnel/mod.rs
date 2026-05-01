@@ -161,7 +161,8 @@ fn default_api_base() -> String {
 pub(crate) fn configured_api_key() -> Option<String> {
     std::env::var("CYBERDESK_AGENT_KEY")
         .ok()
-        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
         .or_else(|| {
             let value = config::LocalConfig::get_option("cyberdesk_api_key");
             let value = value.trim();
@@ -171,32 +172,35 @@ pub(crate) fn configured_api_key() -> Option<String> {
                 let (api_key, _decrypted, should_store) =
                     decrypt_str_or_original(value, API_KEY_ENC_VERSION);
                 if should_store {
-                    store_configured_api_key(api_key.clone());
+                    let _ = store_configured_api_key(api_key.clone());
                 }
                 Some(api_key)
             }
         })
 }
 
-pub(crate) fn store_configured_api_key(api_key: String) {
+pub(crate) fn store_configured_api_key(api_key: String) -> Result<(), &'static str> {
     let encrypted = encrypt_str_or_original(&api_key, API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
     if encrypted.is_empty() {
         log::error!("cyberdesk_tunnel: refusing to store oversized Cyberdesk API key");
-        return;
+        return Err("Cyberdesk API key is too large to store securely");
     }
     config::LocalConfig::set_option("cyberdesk_api_key".to_string(), encrypted);
+    Ok(())
 }
 
 pub(crate) fn configured_api_base() -> String {
     std::env::var("CYBERDESK_API_BASE")
         .ok()
-        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
         .or_else(|| {
             let value = config::LocalConfig::get_option("cyberdesk_api_base");
-            if value.trim().is_empty() {
+            let value = value.trim();
+            if value.is_empty() {
                 None
             } else {
-                Some(value)
+                Some(value.to_string())
             }
         })
         .unwrap_or_else(default_api_base)
