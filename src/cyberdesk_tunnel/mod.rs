@@ -17,9 +17,10 @@
 use hbb_common::{
     anyhow::{bail, Context, Result},
     config, log,
+    password_security::{decrypt_str_or_original, encrypt_str_or_original},
 };
 use serde_derive::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 mod client;
 mod dispatch;
@@ -29,6 +30,9 @@ mod fs;
 mod input;
 mod internal;
 mod shell;
+
+const API_KEY_ENC_VERSION: &str = "00";
+const API_KEY_MAX_LEN: usize = 4096;
 
 fn path_without_query(path: &str) -> &str {
     path.split_once('?').map(|(path, _)| path).unwrap_or(path)
@@ -50,7 +54,7 @@ fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
 ///
 /// | Var                       | Meaning                                              |
 /// |---------------------------|------------------------------------------------------|
-/// | `CYBERDESK_AGENT_KEY`     | Required `ak_*`. Without it, this function no-ops.   |
+/// | `CYBERDESK_AGENT_KEY`     | Optional env `ak_*`; falls back to LocalConfig.      |
 /// | `CYBERDESK_API_BASE`      | Tunnel WS base URL. Default: branded API server.     |
 /// | `CYBERDESK_FINGERPRINT`   | Stable machine UUID. Default: persisted random UUID. |
 ///
@@ -58,18 +62,20 @@ fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
 /// is the correct default for client-mode installs (the laptop case)
 /// and for any build that doesn't want Cyberdesk control.
 pub fn spawn_if_enabled() {
-    let api_key = match std::env::var("CYBERDESK_AGENT_KEY") {
-        Ok(k) if !k.is_empty() => k,
+    maybe_reset_fingerprint_from_env();
+
+    let api_key = match configured_api_key() {
+        Some(k) => k,
         _ => {
             log::info!(
-                "cyberdesk_tunnel: CYBERDESK_AGENT_KEY not set; tunnel disabled (this is fine \
-                 for client-mode installs)"
+                "cyberdesk_tunnel: API key not set; tunnel disabled (this is fine for \
+                 client-mode installs)"
             );
             return;
         }
     };
 
-    let api_base = std::env::var("CYBERDESK_API_BASE").unwrap_or_else(|_| default_api_base());
+    let api_base = configured_api_base();
 
     let fingerprint =
         std::env::var("CYBERDESK_FINGERPRINT").unwrap_or_else(|_| persistent_fingerprint());
@@ -86,10 +92,12 @@ pub fn spawn_if_enabled() {
         let mut backoff = Duration::from_secs(1);
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
+            let machine_name = crate::cyberdesk_cli::machine_name_from_env();
             let result = client::run(
                 api_key.clone(),
                 api_base.clone(),
                 fingerprint.clone(),
+                machine_name,
                 dispatch_semaphore.clone(),
             )
             .await;
@@ -150,22 +158,226 @@ fn default_api_base() -> String {
     }
 }
 
+pub(crate) fn configured_api_key() -> Option<String> {
+    std::env::var("CYBERDESK_AGENT_KEY")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let value = config::LocalConfig::get_option("cyberdesk_api_key");
+            match decode_configured_api_key(&value) {
+                Some((api_key, should_store)) => {
+                    if should_store {
+                        let _ = store_configured_api_key(api_key.clone());
+                    }
+                    Some(api_key)
+                }
+                None => {
+                    if !value.trim().is_empty() {
+                        config::LocalConfig::set_option(
+                            "cyberdesk_api_key".to_string(),
+                            String::new(),
+                        );
+                    }
+                    None
+                }
+            }
+        })
+}
+
+fn decode_configured_api_key(value: &str) -> Option<(String, bool)> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let (api_key, decrypted, should_store) =
+        decrypt_str_or_original(value, API_KEY_ENC_VERSION);
+    if value.starts_with(API_KEY_ENC_VERSION) && !decrypted {
+        log::error!("cyberdesk_tunnel: stored Cyberdesk API key could not be decrypted");
+        return None;
+    }
+    let api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        None
+    } else {
+        Some((api_key, should_store))
+    }
+}
+
+pub(crate) fn store_configured_api_key(api_key: String) -> Result<(), &'static str> {
+    let encrypted = encrypt_str_or_original(&api_key, API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
+    if encrypted.is_empty() {
+        log::error!("cyberdesk_tunnel: refusing to store oversized Cyberdesk API key");
+        return Err("Cyberdesk API key is too large to store securely");
+    }
+    config::LocalConfig::set_option("cyberdesk_api_key".to_string(), encrypted);
+    Ok(())
+}
+
+pub(crate) fn configured_api_base() -> String {
+    std::env::var("CYBERDESK_API_BASE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let value = config::LocalConfig::get_option("cyberdesk_api_base");
+            let value = value.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        })
+        .unwrap_or_else(default_api_base)
+}
+
+pub(crate) fn store_configured_api_base(api_base: String) {
+    config::LocalConfig::set_option("cyberdesk_api_base".to_string(), api_base);
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct TunnelConfig {
     #[serde(default)]
     fingerprint: String,
 }
 
+pub fn config_path() -> PathBuf {
+    config::Config::path("cyberdesk_tunnel.toml")
+}
+
+pub fn current_fingerprint() -> Option<String> {
+    let tunnel_config = config::load_path::<TunnelConfig>(config_path());
+    if tunnel_config.fingerprint.is_empty() {
+        None
+    } else {
+        Some(tunnel_config.fingerprint)
+    }
+}
+
+pub fn reset_fingerprint() -> Result<()> {
+    let path = config_path();
+    let mut tunnel_config = config::load_path::<TunnelConfig>(path.clone());
+    tunnel_config.fingerprint.clear();
+    if let Err(err) = config::store_path(path, &tunnel_config) {
+        log::error!("cyberdesk_tunnel: failed to reset fingerprint: {err}");
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn maybe_reset_fingerprint_from_env() {
+    if matches!(
+        std::env::var("CYBERDRIVER_RESET_FINGERPRINT"),
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
+    ) {
+        match reset_fingerprint() {
+            Ok(_) => log::info!(
+                "cyberdesk_tunnel: reset fingerprint from CYBERDRIVER_RESET_FINGERPRINT"
+            ),
+            Err(err) => log::error!(
+                "cyberdesk_tunnel: failed to reset fingerprint from CYBERDRIVER_RESET_FINGERPRINT: {err}"
+            ),
+        }
+        std::env::remove_var("CYBERDRIVER_RESET_FINGERPRINT");
+    }
+}
+
 fn persistent_fingerprint() -> String {
-    let path = config::Config::path("cyberdesk_tunnel.toml");
+    let path = config_path();
     let mut tunnel_config = config::load_path::<TunnelConfig>(path.clone());
     if !tunnel_config.fingerprint.is_empty() {
         return tunnel_config.fingerprint;
     }
 
-    tunnel_config.fingerprint = uuid::Uuid::new_v4().to_string();
-    if let Err(err) = config::store_path(path, &tunnel_config) {
-        log::error!("cyberdesk_tunnel: failed to store fingerprint: {err}");
+    let legacy_path = if let Some((fingerprint, legacy_path)) = legacy_fingerprint() {
+        tunnel_config.fingerprint = fingerprint;
+        Some(legacy_path)
+    } else {
+        tunnel_config.fingerprint = uuid::Uuid::new_v4().to_string();
+        None
+    };
+    match config::store_path(path, &tunnel_config) {
+        Ok(()) => {
+            if let Some(legacy_path) = legacy_path {
+                log::info!(
+                    "cyberdesk_tunnel: migrated legacy Cyberdriver fingerprint from {}",
+                    legacy_path.display()
+                );
+            }
+        }
+        Err(err) => log::error!("cyberdesk_tunnel: failed to store fingerprint: {err}"),
     }
     tunnel_config.fingerprint
+}
+
+fn legacy_fingerprint() -> Option<(String, PathBuf)> {
+    let path = legacy_config_path()?;
+    let data = std::fs::read_to_string(&path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&data).ok()?;
+    let fingerprint = value.get("fingerprint")?.as_str()?.trim();
+    if fingerprint.is_empty() {
+        return None;
+    }
+    Some((fingerprint.to_string(), path))
+}
+
+fn legacy_config_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .map(|base| base.join(".cyberdriver").join("config.json"))
+    }
+    #[cfg(not(windows))]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
+            })?;
+        Some(base.join(".cyberdriver").join("config.json"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_configured_api_key, API_KEY_ENC_VERSION, API_KEY_MAX_LEN};
+    use hbb_common::password_security::encrypt_str_or_original;
+
+    #[test]
+    fn decode_configured_api_key_omits_empty_values() {
+        assert_eq!(decode_configured_api_key(""), None);
+        assert_eq!(decode_configured_api_key("   "), None);
+
+        let encrypted_empty = encrypt_str_or_original("", API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
+        assert_eq!(decode_configured_api_key(&encrypted_empty), None);
+    }
+
+    #[test]
+    fn decode_configured_api_key_trims_plaintext_and_marks_for_migration() {
+        assert_eq!(
+            decode_configured_api_key("  ak_test  "),
+            Some(("ak_test".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn decode_configured_api_key_reads_encrypted_value() {
+        let encrypted = encrypt_str_or_original("ak_encrypted", API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
+        assert_eq!(
+            decode_configured_api_key(&encrypted),
+            Some(("ak_encrypted".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn decode_configured_api_key_rejects_undecryptable_encrypted_value() {
+        let mut encrypted =
+            encrypt_str_or_original("ak_encrypted", API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
+        encrypted.push('x');
+
+        assert_eq!(decode_configured_api_key(&encrypted), None);
+    }
 }
