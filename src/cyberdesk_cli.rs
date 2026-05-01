@@ -6,10 +6,12 @@
 // read-only and lifecycle commands work on headless Linux machines where no
 // X11/Wayland display is available.
 
+use hbb_common::config::LocalConfig;
 use serde_json::json;
 
 const NAME_ENV: &str = "CYBERDRIVER_MACHINE_NAME";
 const NAME_MAX_LEN: usize = 128;
+const RUN_JOIN_COMMAND: &str = "__cyberdesk-run-join";
 
 pub fn handle_early_args() -> bool {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -22,6 +24,10 @@ pub fn handle_early_args() -> bool {
         }
         EarlyCommand::Join(join) => {
             run_join(join);
+            true
+        }
+        EarlyCommand::RunJoin => {
+            run_join_runtime();
             true
         }
     }
@@ -57,6 +63,7 @@ enum EarlyCommand {
     Continue,
     Handled(i32),
     Join(JoinCommand),
+    RunJoin,
 }
 
 struct JoinCommand {
@@ -79,6 +86,7 @@ fn parse_command(args: &[String]) -> EarlyCommand {
             EarlyCommand::Handled(0)
         }
         "join" => parse_join(args),
+        RUN_JOIN_COMMAND => EarlyCommand::RunJoin,
         "status" | "health" => {
             print_status();
             EarlyCommand::Handled(0)
@@ -127,11 +135,39 @@ fn run_join(join: JoinCommand) {
         std::process::exit(2);
     }
 
-    std::env::set_var("CYBERDESK_AGENT_KEY", join.secret);
+    LocalConfig::set_option("cyberdesk_api_key".to_string(), join.secret);
     if let Some(api_base) = join.api_base {
-        std::env::set_var("CYBERDESK_API_BASE", api_base);
+        LocalConfig::set_option("cyberdesk_api_base".to_string(), api_base);
     }
 
+    match spawn_join_runtime() {
+        Ok(_) => {
+            println!("Cyberdriver is starting in the background.");
+            println!("Use `cyberdriver status` or the Cyberdesk dashboard to verify connection.");
+        }
+        Err(err) => {
+            eprintln!("failed to start Cyberdriver runtime: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn spawn_join_runtime() -> std::io::Result<std::process::Child> {
+    let mut command = std::process::Command::new(std::env::current_exe()?);
+    command.arg(RUN_JOIN_COMMAND);
+    if let Some(name) = machine_name_from_env() {
+        command.env(NAME_ENV, name);
+    } else {
+        command.env_remove(NAME_ENV);
+    }
+    command.spawn()
+}
+
+fn run_join_runtime() {
+    if let Err(message) = ensure_runtime_display_available() {
+        eprintln!("{message}");
+        std::process::exit(2);
+    }
     if !crate::common::global_init() {
         eprintln!("Cyberdriver global initialization failed.");
         std::process::exit(1);
@@ -282,6 +318,10 @@ Options:
   --api-base <base>        Tunnel WebSocket base, e.g. ws://localhost:8080.
   --host <host>            Compatibility shorthand for wss://<host>.
   -h, --help               Show this help.
+
+Security:
+  `--secret` is accepted for Cyberdriver 1.x compatibility. The bootstrap process stores it
+  in local Cyberdriver config, starts the runtime without the secret in argv/env, then exits.
 "#
     );
 }
