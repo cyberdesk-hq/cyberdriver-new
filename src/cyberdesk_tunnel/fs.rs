@@ -131,9 +131,6 @@ pub fn write(body: &[u8]) -> Result<Vec<u8>> {
     if request.path.trim().is_empty() {
         bail!("missing 'path' field");
     }
-    if request.content.is_empty() {
-        bail!("missing 'content' field");
-    }
 
     let mode = request.mode.trim().to_ascii_lowercase();
     if mode != "write" && mode != "append" {
