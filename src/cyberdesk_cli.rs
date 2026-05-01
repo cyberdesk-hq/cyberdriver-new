@@ -11,6 +11,7 @@ use serde_json::json;
 const NAME_ENV: &str = "CYBERDRIVER_MACHINE_NAME";
 const NAME_MAX_LEN: usize = 128;
 const RUN_JOIN_COMMAND: &str = "__cyberdesk-run-join";
+const MSI_CONFIGURE_COMMAND: &str = "__cyberdesk-msi-configure";
 
 pub fn handle_early_args() -> bool {
     crate::cyberdesk_branding::init();
@@ -28,6 +29,10 @@ pub fn handle_early_args() -> bool {
         }
         EarlyCommand::RunJoin => {
             run_join_runtime();
+            true
+        }
+        EarlyCommand::MsiConfigure(configure) => {
+            run_msi_configure(configure);
             true
         }
     }
@@ -74,11 +79,18 @@ enum EarlyCommand {
     Handled(i32),
     Join(JoinCommand),
     RunJoin,
+    MsiConfigure(MsiConfigureCommand),
 }
 
 struct JoinCommand {
     secret: String,
     api_base: Option<String>,
+}
+
+struct MsiConfigureCommand {
+    api_key: Option<String>,
+    api_base: Option<String>,
+    reset_fingerprint: bool,
 }
 
 fn parse_command(args: &[String]) -> EarlyCommand {
@@ -97,6 +109,7 @@ fn parse_command(args: &[String]) -> EarlyCommand {
         }
         "join" => parse_join(args),
         RUN_JOIN_COMMAND => EarlyCommand::RunJoin,
+        MSI_CONFIGURE_COMMAND => parse_msi_configure(args),
         "status" | "health" => {
             print_status();
             EarlyCommand::Handled(0)
@@ -148,6 +161,28 @@ fn parse_join(args: &[String]) -> EarlyCommand {
     EarlyCommand::Join(JoinCommand { secret, api_base })
 }
 
+fn parse_msi_configure(args: &[String]) -> EarlyCommand {
+    let api_key = option_value(args, "--api-key").filter(|value| !value.trim().is_empty());
+    let api_base = match option_value(args, "--api-base") {
+        Some(value) if value.trim().is_empty() => None,
+        Some(value) => match validate_api_base(&value) {
+            Ok(value) => Some(value),
+            Err(message) => {
+                eprintln!("{message}");
+                return EarlyCommand::Handled(2);
+            }
+        },
+        None => None,
+    };
+    let reset_fingerprint = has_flag(args, "--reset-fingerprint");
+
+    EarlyCommand::MsiConfigure(MsiConfigureCommand {
+        api_key,
+        api_base,
+        reset_fingerprint,
+    })
+}
+
 fn run_join(join: JoinCommand) {
     if let Err(message) = ensure_runtime_display_available() {
         eprintln!("{message}");
@@ -169,6 +204,26 @@ fn run_join(join: JoinCommand) {
         }
         Err(err) => {
             eprintln!("failed to start Cyberdriver runtime: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run_msi_configure(configure: MsiConfigureCommand) {
+    if let Some(api_key) = configure.api_key {
+        if !api_key.trim().is_empty() {
+            if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(api_key) {
+                eprintln!("error: {message}");
+                std::process::exit(2);
+            }
+        }
+    }
+    if let Some(api_base) = configure.api_base {
+        crate::cyberdesk_tunnel::store_configured_api_base(api_base);
+    }
+    if configure.reset_fingerprint {
+        if let Err(err) = crate::cyberdesk_tunnel::reset_fingerprint() {
+            eprintln!("failed to reset Cyberdriver fingerprint: {err}");
             std::process::exit(1);
         }
     }

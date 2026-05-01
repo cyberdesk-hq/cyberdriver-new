@@ -508,7 +508,7 @@ LExit:
     return WcaFinalize(er);
 }
 
-void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvcDisplayName);
+void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvcDisplayName, BOOL shouldStartService);
 UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
 {
     HRESULT hr = S_OK;
@@ -519,6 +519,9 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
     LPWSTR pwzData = NULL;
     LPWSTR svcName = NULL;
     LPWSTR svcBinary = NULL;
+    LPWSTR registerNow = NULL;
+    BOOL shouldStartService = TRUE;
+    BOOL serviceCreated = FALSE;
     wchar_t szSvcDisplayName[500] = { 0 };
     DWORD cchSvcDisplayName = sizeof(szSvcDisplayName) / sizeof(szSvcDisplayName[0]);
 
@@ -542,20 +545,39 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
     }
     svcBinary[0] = L'\0';
     svcBinary += 1;
+    registerNow = wcschr(svcBinary, L';');
+    if (registerNow != NULL) {
+        registerNow[0] = L'\0';
+        registerNow += 1;
+        shouldStartService = !(wcscmp(registerNow, L"0") == 0
+            || _wcsicmp(registerNow, L"N") == 0
+            || _wcsicmp(registerNow, L"NO") == 0
+            || _wcsicmp(registerNow, L"FALSE") == 0);
+    }
 
     hr = StringCchPrintfW(szSvcDisplayName, cchSvcDisplayName, L"%ls Service", svcName);
     ExitOnFailure(hr, "Failed to compose a resource identifier string");
-    if (MyCreateServiceW(svcName, szSvcDisplayName, svcBinary)) {
+    serviceCreated = MyCreateServiceW(svcName, szSvcDisplayName, svcBinary);
+    if (serviceCreated) {
         WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is created.", svcName);
-        if (MyStartServiceW(svcName)) {
-            WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is started.", svcName);
+        if (shouldStartService) {
+            if (MyStartServiceW(svcName)) {
+                WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is started.", svcName);
+            }
+            else {
+                WcaLog(LOGMSG_STANDARD, "Failed to start service: \"%ls\"", svcName);
+            }
         }
         else {
-            WcaLog(LOGMSG_STANDARD, "Failed to start service: \"%ls\"", svcName);
+            WcaLog(LOGMSG_STANDARD, "Service \"%ls\" start deferred by REGISTER_NOW.", svcName);
         }
     }
     else {
         WcaLog(LOGMSG_STANDARD, "Failed to create service: \"%ls\"", svcName);
+    }
+
+    if (serviceCreated && !shouldStartService) {
+        goto LExit;
     }
 
     if (IsServiceRunningW(svcName)) {
@@ -563,7 +585,7 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
     }
     else {
         WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is not running, try create and start service by shell", svcName);
-        TryCreateStartServiceByShell(svcName, svcBinary, szSvcDisplayName);
+        TryCreateStartServiceByShell(svcName, svcBinary, szSvcDisplayName, shouldStartService);
     }
 
 LExit:
@@ -853,7 +875,7 @@ LExit:
     return WcaFinalize(er);
 }
 
-void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvcDisplayName)
+void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvcDisplayName, BOOL shouldStartService)
 {
     HRESULT hr = S_OK;
     HINSTANCE hi = 0;
@@ -911,6 +933,11 @@ void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvc
     }
     else {
         WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is created with shell.", svcName);
+    }
+
+    if (!shouldStartService) {
+        WcaLog(LOGMSG_STANDARD, "Service \"%ls\" start deferred by REGISTER_NOW.", svcName);
+        return;
     }
 
     // Query and log if the service is running.
