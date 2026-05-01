@@ -536,6 +536,7 @@ UINT __stdcall ConfigureCyberdesk(__in MSIHANDLE hInstall)
 
     LPWSTR pwz = NULL;
     LPWSTR pwzData = NULL;
+    LPWSTR configParams = NULL;
     LPWSTR exePath = NULL;
     LPWSTR apiKey = NULL;
     LPWSTR apiBase = NULL;
@@ -556,12 +557,26 @@ UINT __stdcall ConfigureCyberdesk(__in MSIHANDLE hInstall)
     ExitOnFailure(hr, "failed to get CustomActionData");
 
     pwz = pwzData;
-    hr = WcaReadStringFromCaData(&pwz, &exePath);
-    ExitOnFailure(hr, "failed to read executable path from custom action data");
-    hr = WcaReadStringFromCaData(&pwz, &apiKey);
-    ExitOnFailure(hr, "failed to read API key from custom action data");
-    hr = WcaReadStringFromCaData(&pwz, &apiBase);
-    ExitOnFailure(hr, "failed to read API base from custom action data");
+    hr = WcaReadStringFromCaData(&pwz, &configParams);
+    ExitOnFailure(hr, "failed to read Cyberdesk config from custom action data");
+
+    exePath = configParams;
+    apiKey = wcschr(configParams, L';');
+    if (apiKey == NULL) {
+        WcaLog(LOGMSG_STANDARD, "Failed to find Cyberdesk API key in custom action data: %ls", configParams);
+        hr = E_FAIL;
+        goto LExit;
+    }
+    apiKey[0] = L'\0';
+    apiKey += 1;
+    apiBase = wcschr(apiKey, L';');
+    if (apiBase == NULL) {
+        WcaLog(LOGMSG_STANDARD, "Failed to find Cyberdesk API base in custom action data: %ls", apiKey);
+        hr = E_FAIL;
+        goto LExit;
+    }
+    apiBase[0] = L'\0';
+    apiBase += 1;
 
     WcaLog(LOGMSG_STANDARD, "Configuring Cyberdesk headless options with %ls", exePath);
 
