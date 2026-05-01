@@ -229,15 +229,28 @@ fn persistent_fingerprint() -> String {
         return tunnel_config.fingerprint;
     }
 
-    tunnel_config.fingerprint =
-        legacy_fingerprint().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    if let Err(err) = config::store_path(path, &tunnel_config) {
-        log::error!("cyberdesk_tunnel: failed to store fingerprint: {err}");
+    let legacy_path = if let Some((fingerprint, legacy_path)) = legacy_fingerprint() {
+        tunnel_config.fingerprint = fingerprint;
+        Some(legacy_path)
+    } else {
+        tunnel_config.fingerprint = uuid::Uuid::new_v4().to_string();
+        None
+    };
+    match config::store_path(path, &tunnel_config) {
+        Ok(()) => {
+            if let Some(legacy_path) = legacy_path {
+                log::info!(
+                    "cyberdesk_tunnel: migrated legacy Cyberdriver fingerprint from {}",
+                    legacy_path.display()
+                );
+            }
+        }
+        Err(err) => log::error!("cyberdesk_tunnel: failed to store fingerprint: {err}"),
     }
     tunnel_config.fingerprint
 }
 
-fn legacy_fingerprint() -> Option<String> {
+fn legacy_fingerprint() -> Option<(String, PathBuf)> {
     let path = legacy_config_path()?;
     let data = std::fs::read_to_string(&path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&data).ok()?;
@@ -245,11 +258,7 @@ fn legacy_fingerprint() -> Option<String> {
     if fingerprint.is_empty() {
         return None;
     }
-    log::info!(
-        "cyberdesk_tunnel: migrated legacy Cyberdriver fingerprint from {}",
-        path.display()
-    );
-    Some(fingerprint.to_string())
+    Some((fingerprint.to_string(), path))
 }
 
 fn legacy_config_path() -> Option<PathBuf> {

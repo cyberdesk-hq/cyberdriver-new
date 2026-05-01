@@ -6,9 +6,7 @@
 // read-only and lifecycle commands work on headless Linux machines where no
 // X11/Wayland display is available.
 
-use hbb_common::config;
 use serde_json::json;
-use std::path::PathBuf;
 
 const NAME_ENV: &str = "CYBERDRIVER_MACHINE_NAME";
 const NAME_MAX_LEN: usize = 128;
@@ -309,11 +307,6 @@ fn option_value(args: &[String], name: &str) -> Option<String> {
 
 fn has_flag(args: &[String], name: &str) -> bool {
     args.iter().any(|arg| arg == name)
-}
-
-#[allow(dead_code)]
-fn _config_path_for_docs() -> PathBuf {
-    config::Config::path("cyberdesk_tunnel.toml")
 }
 
 #[cfg(test)]
