@@ -54,6 +54,13 @@ pub fn keepalive_disable() -> Result<(u16, Vec<u8>, &'static str)> {
     Ok((204, Vec::new(), "application/json"))
 }
 
+pub fn shutdown_enabled() -> bool {
+    matches!(
+        std::env::var("CYBERDESK_ENABLE_INTERNAL_SHUTDOWN"),
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
+    )
+}
+
 pub fn shutdown(body: &[u8]) -> Result<Vec<u8>> {
     let payload = parse_json_value(body).unwrap_or_else(|_| json!({}));
     let reason = payload

@@ -121,10 +121,19 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(500, format!("diagnostics failed: {err:#}")),
         },
-        ("POST", "/internal/shutdown") => match internal::shutdown(body) {
-            Ok(body) => (200, body, "application/json"),
-            Err(err) => json_error(500, format!("shutdown failed: {err:#}")),
-        },
+        ("POST", "/internal/shutdown") => {
+            if !internal::shutdown_enabled() {
+                json_error(
+                    403,
+                    "internal shutdown is disabled on this agent".to_string(),
+                )
+            } else {
+                match internal::shutdown(body) {
+                    Ok(body) => (200, body, "application/json"),
+                    Err(err) => json_error(500, format!("shutdown failed: {err:#}")),
+                }
+            }
+        }
         ("POST", "/internal/keepalive/remote/activity") => match internal::keepalive_activity() {
             Ok(response) => response,
             Err(err) => json_error(500, format!("keepalive activity failed: {err:#}")),
