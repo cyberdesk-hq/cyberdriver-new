@@ -14,6 +14,7 @@ const NAME_MAX_LEN: usize = 128;
 const RUN_JOIN_COMMAND: &str = "__cyberdesk-run-join";
 
 pub fn handle_early_args() -> bool {
+    crate::cyberdesk_branding::init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     apply_transient_name_from_args(&args);
 
