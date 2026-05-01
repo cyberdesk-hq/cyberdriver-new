@@ -23,11 +23,17 @@ use futures_util::{Sink, SinkExt, StreamExt};
 use hbb_common::anyhow::{anyhow, bail, Context, Result};
 use hbb_common::{
     log,
-    tokio::{self, sync::mpsc},
+    tokio::{
+        self,
+        sync::{mpsc, OwnedSemaphorePermit, Semaphore},
+    },
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, http::HeaderValue, Message},
@@ -38,6 +44,7 @@ use tokio_tungstenite::{
 /// agent, not a foreign client.
 const VERSION: &str = concat!("cyberdriver-rs/", env!("CARGO_PKG_VERSION"));
 const MAX_REQUEST_BODY_BYTES: usize = 150 * 1024 * 1024;
+const MAX_IN_FLIGHT_DISPATCHES: usize = 4;
 const MAX_IDEMPOTENCY_ENTRIES: usize = 128;
 const MAX_IDEMPOTENCY_BODY_BYTES: usize = 2 * 1024 * 1024;
 
@@ -89,6 +96,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
     let mut pending_error: Option<(u16, Vec<u8>, &'static str)> = None;
     let mut idempotency_cache = IdempotencyCache::default();
     let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+    let dispatch_semaphore = Arc::new(Semaphore::new(MAX_IN_FLIGHT_DISPATCHES));
 
     loop {
         let msg = tokio::select! {
@@ -134,17 +142,34 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                                 if let Some(response) = idempotency_cache.get(key) {
                                     response
                                 } else {
-                                    spawn_dispatch(
-                                        meta,
-                                        body,
-                                        Some(key.to_string()),
-                                        response_tx.clone(),
-                                    );
-                                    continue;
+                                    match dispatch_semaphore.clone().try_acquire_owned() {
+                                        Ok(permit) => {
+                                            spawn_dispatch(
+                                                meta,
+                                                body,
+                                                Some(key.to_string()),
+                                                response_tx.clone(),
+                                                permit,
+                                            );
+                                            continue;
+                                        }
+                                        Err(_) => too_many_in_flight_response(),
+                                    }
                                 }
                             } else {
-                                spawn_dispatch(meta, body, None, response_tx.clone());
-                                continue;
+                                match dispatch_semaphore.clone().try_acquire_owned() {
+                                    Ok(permit) => {
+                                        spawn_dispatch(
+                                            meta,
+                                            body,
+                                            None,
+                                            response_tx.clone(),
+                                            permit,
+                                        );
+                                        continue;
+                                    }
+                                    Err(_) => too_many_in_flight_response(),
+                                }
                             }
                         }
                     };
@@ -265,6 +290,7 @@ fn spawn_dispatch(
     body: Vec<u8>,
     idempotency_key: Option<String>,
     response_tx: mpsc::UnboundedSender<DispatchResponse>,
+    permit: OwnedSemaphorePermit,
 ) {
     let method = meta.method.clone();
     let log_path = log_path(&meta.path);
@@ -278,6 +304,7 @@ fn spawn_dispatch(
             idempotency_key,
             response,
         });
+        drop(permit);
     });
 }
 
@@ -433,6 +460,22 @@ fn request_body_too_large_response() -> (u16, Vec<u8>, &'static str) {
         format!(
             r#"{{"error":"request body exceeds {} byte limit"}}"#,
             MAX_REQUEST_BODY_BYTES
+        )
+        .into_bytes(),
+        "application/json",
+    )
+}
+
+fn too_many_in_flight_response() -> (u16, Vec<u8>, &'static str) {
+    log::warn!(
+        "cyberdesk_tunnel: rejecting request because {} dispatches are already in flight",
+        MAX_IN_FLIGHT_DISPATCHES
+    );
+    (
+        429,
+        format!(
+            r#"{{"error":"too many in-flight tunnel requests (limit {})"}}"#,
+            MAX_IN_FLIGHT_DISPATCHES
         )
         .into_bytes(),
         "application/json",
