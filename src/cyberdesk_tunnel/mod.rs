@@ -85,10 +85,12 @@ pub fn spawn_if_enabled() {
     hbb_common::tokio::spawn(async move {
         let mut backoff = Duration::from_secs(1);
         loop {
-            match client::run(api_key.clone(), api_base.clone(), fingerprint.clone()).await {
+            let result = client::run(api_key.clone(), api_base.clone(), fingerprint.clone()).await;
+            let should_increase_backoff = match result {
                 Ok(()) => {
                     log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
                     backoff = Duration::from_secs(1);
+                    false
                 }
                 Err(e) => {
                     let message = format!("{e:?}");
@@ -97,11 +99,14 @@ pub fn spawn_if_enabled() {
                         log::error!("cyberdesk_tunnel: auth rejected; tunnel will not reconnect");
                         break;
                     }
+                    true
                 }
-            }
+            };
 
             hbb_common::tokio::time::sleep(backoff).await;
-            backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
+            if should_increase_backoff {
+                backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
+            }
         }
     });
 }
