@@ -346,24 +346,29 @@ fn api_base_from_host(host: &str) -> String {
 
 fn validate_api_base(raw: &str) -> Result<String, String> {
     let value = raw.trim();
-    if value.starts_with("wss://") {
-        return Ok(value.to_string());
+    let lower_value = value.to_ascii_lowercase();
+    if lower_value.starts_with("wss://") {
+        return Ok(format!("wss://{}", &value["wss://".len()..]));
     }
-    if let Some(rest) = value.strip_prefix("https://") {
-        return Ok(format!("wss://{rest}"));
+    if lower_value.starts_with("https://") {
+        return Ok(format!("wss://{}", &value["https://".len()..]));
     }
 
-    if value.starts_with("ws://") || value.starts_with("http://") {
+    if lower_value.starts_with("ws://") || lower_value.starts_with("http://") {
         if is_loopback_api_base(value) {
-            if let Some(rest) = value.strip_prefix("http://") {
-                return Ok(format!("ws://{rest}"));
+            if lower_value.starts_with("http://") {
+                return Ok(format!("ws://{}", &value["http://".len()..]));
             }
-            return Ok(value.to_string());
+            return Ok(format!("ws://{}", &value["ws://".len()..]));
         }
         return Err(
             "error: insecure --api-base is only allowed for localhost/loopback dev targets"
                 .to_string(),
         );
+    }
+
+    if value.contains("://") {
+        return Err("error: unsupported --api-base URL scheme".to_string());
     }
 
     Ok(api_base_from_host(value))
@@ -437,7 +442,9 @@ mod tests {
     fn validate_api_base_rejects_insecure_non_loopback() {
         assert!(validate_api_base("ws://api.cyberdesk.io").is_err());
         assert!(validate_api_base("http://10.0.0.10:8080").is_err());
+        assert!(validate_api_base("HTTP://10.0.0.10:8080").is_err());
         assert!(validate_api_base("http://evil.com#@localhost:8080").is_err());
+        assert!(validate_api_base("ftp://api.cyberdesk.io").is_err());
     }
 
     #[test]
@@ -451,7 +458,15 @@ mod tests {
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
+            validate_api_base("HTTPS://api.cyberdesk.io"),
+            Ok("wss://api.cyberdesk.io".to_string())
+        );
+        assert_eq!(
             validate_api_base("ws://localhost:8080"),
+            Ok("ws://localhost:8080".to_string())
+        );
+        assert_eq!(
+            validate_api_base("WS://localhost:8080"),
             Ok("ws://localhost:8080".to_string())
         );
         assert_eq!(
