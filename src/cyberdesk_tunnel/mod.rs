@@ -154,7 +154,7 @@ fn default_api_base() -> String {
     }
 }
 
-fn configured_api_key() -> Option<String> {
+pub(crate) fn configured_api_key() -> Option<String> {
     std::env::var("CYBERDESK_AGENT_KEY")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -168,7 +168,7 @@ fn configured_api_key() -> Option<String> {
         })
 }
 
-fn configured_api_base() -> String {
+pub(crate) fn configured_api_base() -> String {
     std::env::var("CYBERDESK_API_BASE")
         .ok()
         .filter(|value| !value.trim().is_empty())

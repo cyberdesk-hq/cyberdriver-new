@@ -6,7 +6,7 @@
 // read-only and lifecycle commands work on headless Linux machines where no
 // X11/Wayland display is available.
 
-use hbb_common::config::{self, LocalConfig};
+use hbb_common::config;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -164,7 +164,7 @@ fn reset_fingerprint() {
 }
 
 fn print_status() {
-    let api_key = api_key();
+    let api_key = crate::cyberdesk_tunnel::configured_api_key();
     let fingerprint = crate::cyberdesk_tunnel::current_fingerprint();
     println!("Cyberdriver status");
     println!(
@@ -191,8 +191,8 @@ fn print_status() {
 
 fn print_config() {
     let value = json!({
-        "api_key_configured": api_key().is_some(),
-        "api_base": api_base(),
+        "api_key_configured": crate::cyberdesk_tunnel::configured_api_key().is_some(),
+        "api_base": crate::cyberdesk_tunnel::configured_api_base(),
         "fingerprint": crate::cyberdesk_tunnel::current_fingerprint(),
         "machine_name": machine_name_from_env(),
         "config_path": crate::cyberdesk_tunnel::config_path().display().to_string(),
@@ -286,45 +286,6 @@ Options:
   -h, --help               Show this help.
 "#
     );
-}
-
-fn api_key() -> Option<String> {
-    std::env::var("CYBERDESK_AGENT_KEY")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            let value = LocalConfig::get_option("cyberdesk_api_key");
-            if value.trim().is_empty() {
-                None
-            } else {
-                Some(value)
-            }
-        })
-}
-
-fn api_base() -> String {
-    std::env::var("CYBERDESK_API_BASE")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| {
-            let value = LocalConfig::get_option("cyberdesk_api_base");
-            if value.trim().is_empty() {
-                default_api_base()
-            } else {
-                value
-            }
-        })
-}
-
-fn default_api_base() -> String {
-    let api_server = crate::cyberdesk_branding::API_SERVER;
-    if let Some(rest) = api_server.strip_prefix("https://") {
-        format!("wss://{rest}")
-    } else if let Some(rest) = api_server.strip_prefix("http://") {
-        format!("ws://{rest}")
-    } else {
-        api_server.to_string()
-    }
 }
 
 fn api_base_from_host(host: &str) -> String {
