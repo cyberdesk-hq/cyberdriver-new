@@ -83,8 +83,8 @@
 
 			<Custom Action="RemoveInstallFolder" Before="RemoveFiles"/>
 			<Custom Action="RemoveInstallFolder.SetParam" Before="RemoveInstallFolder"/>
-			<Custom Action="TryStopDeleteService" Before="RemoveInstallFolder.SetParam" />
-			<Custom Action="TryStopDeleteService.SetParam" Before="TryStopDeleteService" />
+			<Custom Action="TryStopDeleteService" Before="RemoveInstallFolder.SetParam" Condition="(Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE) OR ((INSTALL_AS_SERVICE=1 OR INSTALL_AS_SERVICE=&quot;Y&quot; OR INSTALL_AS_SERVICE=&quot;y&quot;) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;))" />
+			<Custom Action="TryStopDeleteService.SetParam" Before="TryStopDeleteService" Condition="(Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE) OR ((INSTALL_AS_SERVICE=1 OR INSTALL_AS_SERVICE=&quot;Y&quot; OR INSTALL_AS_SERVICE=&quot;y&quot;) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;))" />
 
 			<Custom Action="RemoveFirewallRules" Before="RemoveFiles"/>
 			<Custom Action="RemoveFirewallRules.SetParam" Before="RemoveFirewallRules"/>

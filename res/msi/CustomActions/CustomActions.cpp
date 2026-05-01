@@ -563,7 +563,7 @@ UINT __stdcall ConfigureCyberdesk(__in MSIHANDLE hInstall)
     exePath = configParams;
     apiKey = wcschr(configParams, L';');
     if (apiKey == NULL) {
-        WcaLog(LOGMSG_STANDARD, "Failed to find Cyberdesk API key in custom action data: %ls", configParams);
+        WcaLog(LOGMSG_STANDARD, "Failed to find Cyberdesk API key in custom action data.");
         hr = E_FAIL;
         goto LExit;
     }
@@ -571,7 +571,7 @@ UINT __stdcall ConfigureCyberdesk(__in MSIHANDLE hInstall)
     apiKey += 1;
     apiBase = wcschr(apiKey, L';');
     if (apiBase == NULL) {
-        WcaLog(LOGMSG_STANDARD, "Failed to find Cyberdesk API base in custom action data: %ls", apiKey);
+        WcaLog(LOGMSG_STANDARD, "Failed to find Cyberdesk API base in custom action data.");
         hr = E_FAIL;
         goto LExit;
     }
