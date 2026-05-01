@@ -57,6 +57,7 @@ pub async fn run(
     api_key: String,
     api_base: String,
     fingerprint: String,
+    machine_name: Option<String>,
     dispatch_semaphore: Arc<Semaphore>,
 ) -> Result<()> {
     let url = format!("{}/tunnel/ws", api_base);
@@ -87,6 +88,13 @@ pub async fn run(
         HeaderValue::from_str(&hostname())
             .unwrap_or_else(|_| HeaderValue::from_static("cyberdriver")),
     );
+    if let Some(machine_name) = machine_name.as_deref() {
+        headers.insert(
+            "x-cyberdriver-name",
+            HeaderValue::from_str(machine_name)
+                .map_err(|e| anyhow!("invalid X-Cyberdriver-Name header value: {e}"))?,
+        );
+    }
 
     let (ws, response) = connect_async(request)
         .await

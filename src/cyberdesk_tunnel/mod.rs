@@ -19,7 +19,7 @@ use hbb_common::{
     config, log,
 };
 use serde_derive::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 mod client;
 mod dispatch;
@@ -50,7 +50,7 @@ fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
 ///
 /// | Var                       | Meaning                                              |
 /// |---------------------------|------------------------------------------------------|
-/// | `CYBERDESK_AGENT_KEY`     | Required `ak_*`. Without it, this function no-ops.   |
+/// | `CYBERDESK_AGENT_KEY`     | Optional env `ak_*`; falls back to LocalConfig.      |
 /// | `CYBERDESK_API_BASE`      | Tunnel WS base URL. Default: branded API server.     |
 /// | `CYBERDESK_FINGERPRINT`   | Stable machine UUID. Default: persisted random UUID. |
 ///
@@ -58,21 +58,24 @@ fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
 /// is the correct default for client-mode installs (the laptop case)
 /// and for any build that doesn't want Cyberdesk control.
 pub fn spawn_if_enabled() {
-    let api_key = match std::env::var("CYBERDESK_AGENT_KEY") {
-        Ok(k) if !k.is_empty() => k,
+    maybe_reset_fingerprint_from_env();
+
+    let api_key = match configured_api_key() {
+        Some(k) => k,
         _ => {
             log::info!(
-                "cyberdesk_tunnel: CYBERDESK_AGENT_KEY not set; tunnel disabled (this is fine \
-                 for client-mode installs)"
+                "cyberdesk_tunnel: API key not set; tunnel disabled (this is fine for \
+                 client-mode installs)"
             );
             return;
         }
     };
 
-    let api_base = std::env::var("CYBERDESK_API_BASE").unwrap_or_else(|_| default_api_base());
+    let api_base = configured_api_base();
 
     let fingerprint =
         std::env::var("CYBERDESK_FINGERPRINT").unwrap_or_else(|_| persistent_fingerprint());
+    let machine_name = crate::cyberdesk_cli::machine_name_from_env();
 
     log::info!(
         "cyberdesk_tunnel: spawning tunnel client (api_base={}, fingerprint={})",
@@ -90,6 +93,7 @@ pub fn spawn_if_enabled() {
                 api_key.clone(),
                 api_base.clone(),
                 fingerprint.clone(),
+                machine_name.clone(),
                 dispatch_semaphore.clone(),
             )
             .await;
@@ -150,22 +154,119 @@ fn default_api_base() -> String {
     }
 }
 
+fn configured_api_key() -> Option<String> {
+    std::env::var("CYBERDESK_AGENT_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            let value = config::LocalConfig::get_option("cyberdesk_api_key");
+            if value.trim().is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        })
+}
+
+fn configured_api_base() -> String {
+    std::env::var("CYBERDESK_API_BASE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            let value = config::LocalConfig::get_option("cyberdesk_api_base");
+            if value.trim().is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        })
+        .unwrap_or_else(default_api_base)
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct TunnelConfig {
     #[serde(default)]
     fingerprint: String,
 }
 
+pub fn config_path() -> PathBuf {
+    config::Config::path("cyberdesk_tunnel.toml")
+}
+
+pub fn current_fingerprint() -> Option<String> {
+    let tunnel_config = config::load_path::<TunnelConfig>(config_path());
+    if tunnel_config.fingerprint.is_empty() {
+        None
+    } else {
+        Some(tunnel_config.fingerprint)
+    }
+}
+
+pub fn reset_fingerprint() {
+    let path = config_path();
+    let mut tunnel_config = config::load_path::<TunnelConfig>(path.clone());
+    tunnel_config.fingerprint.clear();
+    if let Err(err) = config::store_path(path, &tunnel_config) {
+        log::error!("cyberdesk_tunnel: failed to reset fingerprint: {err}");
+    }
+}
+
+fn maybe_reset_fingerprint_from_env() {
+    if matches!(
+        std::env::var("CYBERDRIVER_RESET_FINGERPRINT"),
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
+    ) {
+        reset_fingerprint();
+        std::env::remove_var("CYBERDRIVER_RESET_FINGERPRINT");
+        log::info!("cyberdesk_tunnel: reset fingerprint from CYBERDRIVER_RESET_FINGERPRINT");
+    }
+}
+
 fn persistent_fingerprint() -> String {
-    let path = config::Config::path("cyberdesk_tunnel.toml");
+    let path = config_path();
     let mut tunnel_config = config::load_path::<TunnelConfig>(path.clone());
     if !tunnel_config.fingerprint.is_empty() {
         return tunnel_config.fingerprint;
     }
 
-    tunnel_config.fingerprint = uuid::Uuid::new_v4().to_string();
+    tunnel_config.fingerprint =
+        legacy_fingerprint().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     if let Err(err) = config::store_path(path, &tunnel_config) {
         log::error!("cyberdesk_tunnel: failed to store fingerprint: {err}");
     }
     tunnel_config.fingerprint
+}
+
+fn legacy_fingerprint() -> Option<String> {
+    let path = legacy_config_path()?;
+    let data = std::fs::read_to_string(&path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&data).ok()?;
+    let fingerprint = value.get("fingerprint")?.as_str()?.trim();
+    if fingerprint.is_empty() {
+        return None;
+    }
+    log::info!(
+        "cyberdesk_tunnel: migrated legacy Cyberdriver fingerprint from {}",
+        path.display()
+    );
+    Some(fingerprint.to_string())
+}
+
+fn legacy_config_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .map(|base| base.join(".cyberdriver").join("config.json"))
+    }
+    #[cfg(not(windows))]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
+            })?;
+        Some(base.join(".cyberdriver").join("config.json"))
+    }
 }

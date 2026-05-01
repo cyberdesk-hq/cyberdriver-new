@@ -23,6 +23,11 @@ fn main() {
     feature = "flutter"
 )))]
 fn main() {
+    #[cfg(feature = "cyberdesk")]
+    if cyberdesk_cli::handle_early_args() {
+        return;
+    }
+
     #[cfg(all(windows, not(feature = "inline")))]
     unsafe {
         winapi::um::shellscalingapi::SetProcessDpiAwareness(2);
@@ -35,6 +40,11 @@ fn main() {
 
 #[cfg(feature = "cli")]
 fn main() {
+    #[cfg(feature = "cyberdesk")]
+    if cyberdesk_cli::handle_early_args() {
+        return;
+    }
+
     if !common::global_init() {
         return;
     }

@@ -48,6 +48,8 @@ mod custom_server;
 #[cfg(feature = "cyberdesk")]
 mod cyberdesk_branding;
 #[cfg(feature = "cyberdesk")]
+pub mod cyberdesk_cli;
+#[cfg(feature = "cyberdesk")]
 pub mod cyberdesk_tunnel;
 mod lang;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
