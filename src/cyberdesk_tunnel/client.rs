@@ -19,9 +19,12 @@ use super::{
     path_without_query,
 };
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, StreamExt};
 use hbb_common::anyhow::{anyhow, bail, Context, Result};
-use hbb_common::{log, tokio};
+use hbb_common::{
+    log,
+    tokio::{self, sync::mpsc},
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
@@ -85,11 +88,23 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
     let mut pending_body: Vec<u8> = Vec::new();
     let mut pending_error: Option<(u16, Vec<u8>, &'static str)> = None;
     let mut idempotency_cache = IdempotencyCache::default();
+    let (response_tx, mut response_rx) = mpsc::unbounded_channel();
 
     loop {
-        let msg = match read.next().await {
-            Some(msg) => msg.context("WebSocket read error")?,
-            None => break,
+        let msg = tokio::select! {
+            maybe_msg = read.next() => match maybe_msg {
+                Some(msg) => msg.context("WebSocket read error")?,
+                None => break,
+            },
+            maybe_response = response_rx.recv() => {
+                let Some(response) = maybe_response else {
+                    break;
+                };
+                if let Some((key, response)) = send_response(&mut write, response).await? {
+                    idempotency_cache.insert(key, &response);
+                }
+                continue;
+            }
         };
 
         match msg {
@@ -112,63 +127,39 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     let log_path = log_path(&meta.path);
                     let request_id = meta.request_id.clone();
                     let idempotency_key = idempotency_cache_key(&meta, &body);
-                    let (status, response_body, content_type) = match pending_error.take() {
+                    let response = match pending_error.take() {
                         Some(response) => response,
                         None => {
                             if let Some(key) = idempotency_key.as_deref() {
                                 if let Some(response) = idempotency_cache.get(key) {
                                     response
                                 } else {
-                                    let response = run_dispatch(meta, body).await;
-                                    idempotency_cache.insert(key.to_string(), &response);
-                                    response
+                                    spawn_dispatch(
+                                        meta,
+                                        body,
+                                        Some(key.to_string()),
+                                        response_tx.clone(),
+                                    );
+                                    continue;
                                 }
                             } else {
-                                run_dispatch(meta, body).await
+                                spawn_dispatch(meta, body, None, response_tx.clone());
+                                continue;
                             }
                         }
                     };
 
-                    log::info!(
-                        "cyberdesk_tunnel: {} {} -> {} ({} bytes, request_id={})",
-                        method,
-                        log_path,
-                        status,
-                        response_body.len(),
-                        request_id
-                    );
-
-                    let mut response_headers = HashMap::new();
-                    response_headers.insert("Content-Type".to_string(), content_type.to_string());
-                    response_headers.insert(
-                        "Content-Length".to_string(),
-                        response_body.len().to_string(),
-                    );
-
-                    let resp_meta = ResponseMeta {
-                        status,
-                        headers: response_headers,
-                        request_id,
-                    };
-
-                    let resp_meta_json = serde_json::to_string(&resp_meta)
-                        .context("serializing response metadata")?;
-                    write
-                        .send(Message::Text(resp_meta_json.into()))
-                        .await
-                        .context("sending response metadata frame")?;
-
-                    if !response_body.is_empty() {
-                        write
-                            .send(Message::Binary(response_body.into()))
-                            .await
-                            .context("sending response body binary frame")?;
-                    }
-
-                    write
-                        .send(Message::Text("end".into()))
-                        .await
-                        .context("sending response 'end' sentinel")?;
+                    send_response(
+                        &mut write,
+                        DispatchResponse {
+                            method,
+                            log_path,
+                            request_id,
+                            idempotency_key: None,
+                            response,
+                        },
+                    )
+                    .await?;
                 } else {
                     if pending_meta.is_some() {
                         log::warn!(
@@ -259,7 +250,99 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
     Ok(())
 }
 
-async fn run_dispatch(meta: RequestMeta, body: Vec<u8>) -> (u16, Vec<u8>, &'static str) {
+type ResponseTuple = (u16, Vec<u8>, &'static str);
+
+struct DispatchResponse {
+    method: String,
+    log_path: String,
+    request_id: String,
+    idempotency_key: Option<String>,
+    response: ResponseTuple,
+}
+
+fn spawn_dispatch(
+    meta: RequestMeta,
+    body: Vec<u8>,
+    idempotency_key: Option<String>,
+    response_tx: mpsc::UnboundedSender<DispatchResponse>,
+) {
+    let method = meta.method.clone();
+    let log_path = log_path(&meta.path);
+    let request_id = meta.request_id.clone();
+    tokio::spawn(async move {
+        let response = run_dispatch(meta, body).await;
+        let _ = response_tx.send(DispatchResponse {
+            method,
+            log_path,
+            request_id,
+            idempotency_key,
+            response,
+        });
+    });
+}
+
+async fn send_response<W>(
+    write: &mut W,
+    dispatch_response: DispatchResponse,
+) -> Result<Option<(String, ResponseTuple)>>
+where
+    W: Sink<Message> + Unpin,
+    <W as Sink<Message>>::Error: std::error::Error + Send + Sync + 'static,
+{
+    let DispatchResponse {
+        method,
+        log_path,
+        request_id,
+        idempotency_key,
+        response,
+    } = dispatch_response;
+    let (status, response_body, content_type) = response.clone();
+
+    log::info!(
+        "cyberdesk_tunnel: {} {} -> {} ({} bytes, request_id={})",
+        method,
+        log_path,
+        status,
+        response_body.len(),
+        request_id
+    );
+
+    let mut response_headers = HashMap::new();
+    response_headers.insert("Content-Type".to_string(), content_type.to_string());
+    response_headers.insert(
+        "Content-Length".to_string(),
+        response_body.len().to_string(),
+    );
+
+    let resp_meta = ResponseMeta {
+        status,
+        headers: response_headers,
+        request_id,
+    };
+
+    let resp_meta_json =
+        serde_json::to_string(&resp_meta).context("serializing response metadata")?;
+    write
+        .send(Message::Text(resp_meta_json.into()))
+        .await
+        .context("sending response metadata frame")?;
+
+    if !response_body.is_empty() {
+        write
+            .send(Message::Binary(response_body.into()))
+            .await
+            .context("sending response body binary frame")?;
+    }
+
+    write
+        .send(Message::Text("end".into()))
+        .await
+        .context("sending response 'end' sentinel")?;
+
+    Ok(idempotency_key.map(|key| (key, response)))
+}
+
+async fn run_dispatch(meta: RequestMeta, body: Vec<u8>) -> ResponseTuple {
     match tokio::task::spawn_blocking(move || {
         let request = ReverseTunnelRequest::from_websocket_frames(&meta, &body);
         dispatch::dispatch(request)

@@ -14,7 +14,10 @@
 // builds (and our cyberdesk-connect-only build profile) don't pay the
 // dep cost or behavior change.
 
-use hbb_common::{config, log};
+use hbb_common::{
+    anyhow::{bail, Context, Result},
+    config, log,
+};
 use serde_derive::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -29,6 +32,13 @@ mod shell;
 
 fn path_without_query(path: &str) -> &str {
     path.split_once('?').map(|(path, _)| path).unwrap_or(path)
+}
+
+fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
+    if body.is_empty() {
+        bail!("missing JSON request body");
+    }
+    Ok(serde_json::from_slice(body).context("invalid JSON request body")?)
 }
 
 /// Entry point called from `src/server.rs::start_server` during

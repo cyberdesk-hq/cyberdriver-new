@@ -133,13 +133,13 @@ pub fn mouse_position() -> Result<Vec<u8>> {
 }
 
 pub fn mouse_move(body: &[u8]) -> Result<Vec<u8>> {
-    let request: MouseMoveRequest = parse_json(body)?;
+    let request: MouseMoveRequest = parse_input_json(body)?;
     send_mouse(crate::input::MOUSE_TYPE_MOVE, 0, request.x, request.y);
     empty_json()
 }
 
 pub fn mouse_click(body: &[u8]) -> Result<Vec<u8>> {
-    let request: MouseClickRequest = parse_json(body)?;
+    let request: MouseClickRequest = parse_input_json(body)?;
     let button = mouse_button(&request.button)?;
     let clicks = validate_clicks(request.clicks)?;
 
@@ -164,7 +164,7 @@ pub fn mouse_click(body: &[u8]) -> Result<Vec<u8>> {
 }
 
 pub fn mouse_scroll(body: &[u8]) -> Result<Vec<u8>> {
-    let request: MouseScrollRequest = parse_json(body)?;
+    let request: MouseScrollRequest = parse_input_json(body)?;
     if request.amount < 0 {
         bail!("'amount' must be non-negative");
     }
@@ -182,7 +182,7 @@ pub fn mouse_scroll(body: &[u8]) -> Result<Vec<u8>> {
 }
 
 pub fn mouse_drag(body: &[u8]) -> Result<Vec<u8>> {
-    let request: MouseDragRequest = parse_json(body)?;
+    let request: MouseDragRequest = parse_input_json(body)?;
     let button = mouse_button(&request.button)?;
 
     send_mouse(
@@ -206,7 +206,7 @@ pub fn mouse_drag(body: &[u8]) -> Result<Vec<u8>> {
 }
 
 pub fn keyboard_type(body: &[u8]) -> Result<Vec<u8>> {
-    let mut request: KeyboardTypeRequest = parse_json(body)?;
+    let mut request: KeyboardTypeRequest = parse_input_json(body)?;
     if request.text.is_empty() {
         bail!("'text' field must not be empty");
     }
@@ -224,7 +224,7 @@ pub fn keyboard_type(body: &[u8]) -> Result<Vec<u8>> {
 }
 
 pub fn keyboard_key(body: &[u8]) -> Result<Vec<u8>> {
-    let request: KeyboardKeyRequest = parse_json(body)?;
+    let request: KeyboardKeyRequest = parse_input_json(body)?;
     if request.text.trim().is_empty() {
         bail!("missing 'text' field");
     }
@@ -255,7 +255,7 @@ pub fn keyboard_key(body: &[u8]) -> Result<Vec<u8>> {
 
 pub fn copy_to_clipboard(body: &[u8]) -> std::result::Result<Vec<u8>, ClipboardEndpointError> {
     let request: CopyToClipboardRequest =
-        parse_json(body).map_err(ClipboardEndpointError::bad_request)?;
+        parse_input_json(body).map_err(ClipboardEndpointError::bad_request)?;
     let key_name = request.text.trim();
     if key_name.is_empty() {
         return Err(ClipboardEndpointError::bad_request(Error::msg(
@@ -485,17 +485,14 @@ fn scroll_delta(direction: &str, amount: i32) -> Result<(i32, i32)> {
     }
 }
 
-fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
-    if body.is_empty() {
-        bail!("missing JSON request body");
-    }
+fn parse_input_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
     if body.len() > MAX_INPUT_BODY_BYTES {
         bail!(
             "input request body exceeds {} byte limit",
             MAX_INPUT_BODY_BYTES
         );
     }
-    Ok(serde_json::from_slice(body).context("invalid JSON request body")?)
+    super::parse_json(body)
 }
 
 fn clear_text_clipboard() -> Result<()> {

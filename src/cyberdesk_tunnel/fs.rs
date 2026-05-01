@@ -6,7 +6,7 @@
 //   GET /computer/fs/list?path=...
 //   GET /computer/fs/read?path=...
 
-use super::framing::RequestMeta;
+use super::{framing::RequestMeta, parse_json};
 use hbb_common::{
     anyhow::{bail, Context, Result},
     base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _},
@@ -283,13 +283,6 @@ fn home_dir() -> Option<PathBuf> {
 fn path_param(meta: &RequestMeta) -> Result<Option<String>> {
     let params = query_params(meta);
     Ok(params.get("path").cloned())
-}
-
-fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
-    if body.is_empty() {
-        bail!("missing JSON request body");
-    }
-    Ok(serde_json::from_slice(body).context("invalid JSON request body")?)
 }
 
 fn estimated_decoded_len(encoded: &str) -> usize {

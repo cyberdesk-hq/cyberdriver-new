@@ -7,6 +7,7 @@
 // returned for API compatibility, but no persistent shell actor is kept
 // yet; the stateful actor remains a later M7 item.
 
+use super::parse_json;
 use hbb_common::anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -234,13 +235,6 @@ fn truncate_output(mut output: String) -> String {
         output.push_str("\n...<truncated>");
     }
     output
-}
-
-fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
-    if body.is_empty() {
-        bail!("missing JSON request body");
-    }
-    Ok(serde_json::from_slice(body).context("invalid JSON request body")?)
 }
 
 fn default_true() -> bool {
