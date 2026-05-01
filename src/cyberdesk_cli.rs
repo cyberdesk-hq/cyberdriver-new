@@ -373,7 +373,10 @@ fn is_loopback_api_base(value: &str) -> bool {
     let Ok(url) = url::Url::parse(value) else {
         return false;
     };
-    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
+    matches!(
+        url.host_str().map(|host| host.trim_matches(['[', ']'])),
+        Some("localhost" | "127.0.0.1" | "::1")
+    )
 }
 
 fn option_value(args: &[String], name: &str) -> Option<String> {
