@@ -370,29 +370,10 @@ fn validate_api_base(raw: &str) -> Result<String, String> {
 }
 
 fn is_loopback_api_base(value: &str) -> bool {
-    let Some(rest) = value
-        .strip_prefix("ws://")
-        .or_else(|| value.strip_prefix("http://"))
-    else {
+    let Ok(url) = url::Url::parse(value) else {
         return false;
     };
-    let host_port_path = rest.split('/').next().unwrap_or("");
-    let authority = host_port_path
-        .rsplit_once('@')
-        .map(|(_, host)| host)
-        .unwrap_or(host_port_path);
-    let host = if let Some(bracketed) = authority.strip_prefix('[') {
-        bracketed
-            .split_once(']')
-            .map(|(host, _)| host)
-            .unwrap_or(authority)
-    } else {
-        authority
-            .rsplit_once(':')
-            .map(|(host, _)| host)
-            .unwrap_or(authority)
-    };
-    matches!(host, "localhost" | "127.0.0.1" | "::1")
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
 }
 
 fn option_value(args: &[String], name: &str) -> Option<String> {
@@ -453,6 +434,7 @@ mod tests {
     fn validate_api_base_rejects_insecure_non_loopback() {
         assert!(validate_api_base("ws://api.cyberdesk.io").is_err());
         assert!(validate_api_base("http://10.0.0.10:8080").is_err());
+        assert!(validate_api_base("http://evil.com#@localhost:8080").is_err());
     }
 
     #[test]
