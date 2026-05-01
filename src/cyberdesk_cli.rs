@@ -7,10 +7,12 @@
 // X11/Wayland display is available.
 
 use serde_json::json;
+use std::io::Read as _;
 
 const NAME_ENV: &str = "CYBERDRIVER_MACHINE_NAME";
 const NAME_MAX_LEN: usize = 128;
 const RUN_JOIN_COMMAND: &str = "__cyberdesk-run-join";
+const MSI_CONFIGURE_COMMAND: &str = "__cyberdesk-msi-configure";
 
 pub fn handle_early_args() -> bool {
     crate::cyberdesk_branding::init();
@@ -28,6 +30,10 @@ pub fn handle_early_args() -> bool {
         }
         EarlyCommand::RunJoin => {
             run_join_runtime();
+            true
+        }
+        EarlyCommand::MsiConfigure(configure) => {
+            run_msi_configure(configure);
             true
         }
     }
@@ -74,11 +80,18 @@ enum EarlyCommand {
     Handled(i32),
     Join(JoinCommand),
     RunJoin,
+    MsiConfigure(MsiConfigureCommand),
 }
 
 struct JoinCommand {
     secret: String,
     api_base: Option<String>,
+}
+
+struct MsiConfigureCommand {
+    api_key: Option<String>,
+    api_base: Option<String>,
+    reset_fingerprint: bool,
 }
 
 fn parse_command(args: &[String]) -> EarlyCommand {
@@ -97,6 +110,7 @@ fn parse_command(args: &[String]) -> EarlyCommand {
         }
         "join" => parse_join(args),
         RUN_JOIN_COMMAND => EarlyCommand::RunJoin,
+        MSI_CONFIGURE_COMMAND => parse_msi_configure(args),
         "status" | "health" => {
             print_status();
             EarlyCommand::Handled(0)
@@ -148,6 +162,62 @@ fn parse_join(args: &[String]) -> EarlyCommand {
     EarlyCommand::Join(JoinCommand { secret, api_base })
 }
 
+fn parse_msi_configure(args: &[String]) -> EarlyCommand {
+    if has_flag(args, "--stdin") {
+        return match read_msi_config_from_stdin() {
+            Ok(configure) => EarlyCommand::MsiConfigure(configure),
+            Err(message) => {
+                eprintln!("{message}");
+                EarlyCommand::Handled(2)
+            }
+        };
+    }
+
+    let api_key = option_value(args, "--api-key").filter(|value| !value.trim().is_empty());
+    let api_base = match option_value(args, "--api-base") {
+        Some(value) if value.trim().is_empty() => None,
+        Some(value) => match validate_api_base(&value) {
+            Ok(value) => Some(value),
+            Err(message) => {
+                eprintln!("{message}");
+                return EarlyCommand::Handled(2);
+            }
+        },
+        None => None,
+    };
+    let reset_fingerprint = has_flag(args, "--reset-fingerprint");
+
+    EarlyCommand::MsiConfigure(MsiConfigureCommand {
+        api_key,
+        api_base,
+        reset_fingerprint,
+    })
+}
+
+fn read_msi_config_from_stdin() -> Result<MsiConfigureCommand, String> {
+    let mut raw = String::new();
+    std::io::stdin()
+        .read_to_string(&mut raw)
+        .map_err(|err| format!("failed to read MSI configuration from stdin: {err}"))?;
+
+    let mut lines = raw.lines();
+    let api_key = lines
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let api_base = match lines.next().map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => Some(validate_api_base(value)?),
+        None => None,
+    };
+
+    Ok(MsiConfigureCommand {
+        api_key,
+        api_base,
+        reset_fingerprint: false,
+    })
+}
+
 fn run_join(join: JoinCommand) {
     if let Err(message) = ensure_runtime_display_available() {
         eprintln!("{message}");
@@ -169,6 +239,26 @@ fn run_join(join: JoinCommand) {
         }
         Err(err) => {
             eprintln!("failed to start Cyberdriver runtime: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run_msi_configure(configure: MsiConfigureCommand) {
+    if let Some(api_key) = configure.api_key {
+        if !api_key.trim().is_empty() {
+            if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(api_key) {
+                eprintln!("error: {message}");
+                std::process::exit(2);
+            }
+        }
+    }
+    if let Some(api_base) = configure.api_base {
+        crate::cyberdesk_tunnel::store_configured_api_base(api_base);
+    }
+    if configure.reset_fingerprint {
+        if let Err(err) = crate::cyberdesk_tunnel::reset_fingerprint() {
+            eprintln!("failed to reset Cyberdriver fingerprint: {err}");
             std::process::exit(1);
         }
     }
@@ -428,7 +518,15 @@ fn option_value(args: &[String], name: &str) -> Option<String> {
 fn is_known_option(value: &str) -> bool {
     matches!(
         value,
-        "--secret" | "--name" | "--api-base" | "--host" | "-h" | "--help"
+        "--secret"
+            | "--name"
+            | "--api-base"
+            | "--host"
+            | "--api-key"
+            | "--stdin"
+            | "--reset-fingerprint"
+            | "-h"
+            | "--help"
     )
 }
 
@@ -481,6 +579,25 @@ mod tests {
         ];
         assert_eq!(option_value(&args, "--name"), None);
         assert_eq!(option_value(&args, "--secret"), Some("ak_test".to_string()));
+    }
+
+    #[test]
+    fn option_value_does_not_treat_msi_flags_as_values() {
+        let args = vec![
+            "__cyberdesk-msi-configure".to_string(),
+            "--api-base".to_string(),
+            "--api-key".to_string(),
+            "ak_test".to_string(),
+            "--reset-fingerprint".to_string(),
+        ];
+        assert_eq!(option_value(&args, "--api-base"), None);
+        assert_eq!(option_value(&args, "--api-key"), Some("ak_test".to_string()));
+    }
+
+    #[test]
+    fn validate_api_base_omits_empty_msi_stdin_values() {
+        assert!(validate_api_base("").is_err());
+        assert!(validate_api_base("   ").is_err());
     }
 
     #[test]

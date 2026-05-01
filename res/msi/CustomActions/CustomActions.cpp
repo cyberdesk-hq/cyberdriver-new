@@ -7,10 +7,30 @@
 #include <winternl.h>
 #include <netfw.h>
 #include <shlwapi.h>
+#include <string>
 
 #include "./Common.h"
 
 #pragma comment(lib, "Shlwapi.lib")
+
+BOOL AppendWideLineAsUtf8(LPCWSTR value, std::string& out)
+{
+    if (value == NULL) {
+        value = L"";
+    }
+    int len = WideCharToMultiByte(CP_UTF8, 0, value, -1, NULL, 0, NULL, NULL);
+    if (len <= 0) {
+        return FALSE;
+    }
+    std::string tmp;
+    tmp.resize(len);
+    if (WideCharToMultiByte(CP_UTF8, 0, value, -1, &tmp[0], len, NULL, NULL) <= 0) {
+        return FALSE;
+    }
+    out.append(tmp.c_str());
+    out.push_back('\n');
+    return TRUE;
+}
 
 UINT __stdcall CustomActionHello(
     __in MSIHANDLE hInstall)
@@ -508,7 +528,127 @@ LExit:
     return WcaFinalize(er);
 }
 
-void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvcDisplayName);
+void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvcDisplayName, BOOL shouldStartService);
+UINT __stdcall ConfigureCyberdesk(__in MSIHANDLE hInstall)
+{
+    HRESULT hr = S_OK;
+    DWORD er = ERROR_SUCCESS;
+
+    LPWSTR pwz = NULL;
+    LPWSTR pwzData = NULL;
+    LPWSTR configParams = NULL;
+    LPWSTR exePath = NULL;
+    LPWSTR apiKey = NULL;
+    LPWSTR apiBase = NULL;
+    HANDLE stdinRead = NULL;
+    HANDLE stdinWrite = NULL;
+    PROCESS_INFORMATION pi = { 0 };
+    STARTUPINFOW si = { 0 };
+    SECURITY_ATTRIBUTES sa = { 0 };
+    wchar_t cmd[1200] = { 0 };
+    DWORD written = 0;
+    DWORD exitCode = 0;
+    std::string stdinPayload;
+
+    hr = WcaInitialize(hInstall, "ConfigureCyberdesk");
+    ExitOnFailure(hr, "Failed to initialize");
+
+    hr = WcaGetProperty(L"CustomActionData", &pwzData);
+    ExitOnFailure(hr, "failed to get CustomActionData");
+
+    pwz = pwzData;
+    hr = WcaReadStringFromCaData(&pwz, &configParams);
+    ExitOnFailure(hr, "failed to read Cyberdesk config from custom action data");
+
+    exePath = configParams;
+    apiKey = wcschr(configParams, L';');
+    if (apiKey == NULL) {
+        WcaLog(LOGMSG_STANDARD, "Failed to find Cyberdesk API key in custom action data.");
+        hr = E_FAIL;
+        goto LExit;
+    }
+    apiKey[0] = L'\0';
+    apiKey += 1;
+    apiBase = wcschr(apiKey, L';');
+    if (apiBase == NULL) {
+        WcaLog(LOGMSG_STANDARD, "Failed to find Cyberdesk API base in custom action data.");
+        hr = E_FAIL;
+        goto LExit;
+    }
+    apiBase[0] = L'\0';
+    apiBase += 1;
+
+    WcaLog(LOGMSG_STANDARD, "Configuring Cyberdesk headless options with %ls", exePath);
+
+    if (!AppendWideLineAsUtf8(apiKey, stdinPayload) || !AppendWideLineAsUtf8(apiBase, stdinPayload)) {
+        WcaLog(LOGMSG_STANDARD, "Failed to encode Cyberdesk MSI configuration.");
+        hr = E_FAIL;
+        goto LExit;
+    }
+
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+    if (!CreatePipe(&stdinRead, &stdinWrite, &sa, 0)) {
+        WcaLog(LOGMSG_STANDARD, "Failed to create stdin pipe for Cyberdesk config: 0x%02X.", GetLastError());
+        hr = E_FAIL;
+        goto LExit;
+    }
+    SetHandleInformation(stdinWrite, HANDLE_FLAG_INHERIT, 0);
+
+    hr = StringCchPrintfW(cmd, sizeof(cmd) / sizeof(cmd[0]), L"\"%ls\" __cyberdesk-msi-configure --stdin", exePath);
+    ExitOnFailure(hr, "Failed to build Cyberdesk configure command");
+
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = stdinRead;
+    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+
+    if (!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        WcaLog(LOGMSG_STANDARD, "Failed to start Cyberdesk configure command: 0x%02X.", GetLastError());
+        hr = E_FAIL;
+        goto LExit;
+    }
+
+    CloseHandle(stdinRead);
+    stdinRead = NULL;
+    if (!stdinPayload.empty()) {
+        if (!WriteFile(stdinWrite, stdinPayload.data(), (DWORD)stdinPayload.size(), &written, NULL)) {
+            WcaLog(LOGMSG_STANDARD, "Failed to write Cyberdesk MSI config stdin: 0x%02X.", GetLastError());
+            hr = E_FAIL;
+        }
+    }
+    CloseHandle(stdinWrite);
+    stdinWrite = NULL;
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    if (GetExitCodeProcess(pi.hProcess, &exitCode) && exitCode != 0) {
+        WcaLog(LOGMSG_STANDARD, "Cyberdesk configure command exited with code: %u.", exitCode);
+        hr = E_FAIL;
+    }
+
+LExit:
+    if (stdinRead) {
+        CloseHandle(stdinRead);
+    }
+    if (stdinWrite) {
+        CloseHandle(stdinWrite);
+    }
+    if (pi.hThread) {
+        CloseHandle(pi.hThread);
+    }
+    if (pi.hProcess) {
+        CloseHandle(pi.hProcess);
+    }
+    if (pwzData) {
+        ReleaseStr(pwzData);
+    }
+
+    er = SUCCEEDED(hr) ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
+    return WcaFinalize(er);
+}
+
 UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
 {
     HRESULT hr = S_OK;
@@ -519,6 +659,9 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
     LPWSTR pwzData = NULL;
     LPWSTR svcName = NULL;
     LPWSTR svcBinary = NULL;
+    LPWSTR registerNow = NULL;
+    BOOL shouldStartService = TRUE;
+    BOOL serviceCreated = FALSE;
     wchar_t szSvcDisplayName[500] = { 0 };
     DWORD cchSvcDisplayName = sizeof(szSvcDisplayName) / sizeof(szSvcDisplayName[0]);
 
@@ -542,28 +685,45 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
     }
     svcBinary[0] = L'\0';
     svcBinary += 1;
+    registerNow = wcschr(svcBinary, L';');
+    if (registerNow != NULL) {
+        registerNow[0] = L'\0';
+        registerNow += 1;
+        shouldStartService = !(wcscmp(registerNow, L"0") == 0
+            || _wcsicmp(registerNow, L"N") == 0
+            || _wcsicmp(registerNow, L"NO") == 0
+            || _wcsicmp(registerNow, L"FALSE") == 0);
+    }
 
     hr = StringCchPrintfW(szSvcDisplayName, cchSvcDisplayName, L"%ls Service", svcName);
     ExitOnFailure(hr, "Failed to compose a resource identifier string");
-    if (MyCreateServiceW(svcName, szSvcDisplayName, svcBinary)) {
+    serviceCreated = MyCreateServiceW(svcName, szSvcDisplayName, svcBinary);
+    if (serviceCreated) {
         WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is created.", svcName);
-        if (MyStartServiceW(svcName)) {
-            WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is started.", svcName);
+        if (shouldStartService) {
+            if (MyStartServiceW(svcName)) {
+                WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is started.", svcName);
+            }
+            else {
+                WcaLog(LOGMSG_STANDARD, "Failed to start service: \"%ls\"", svcName);
+            }
         }
         else {
-            WcaLog(LOGMSG_STANDARD, "Failed to start service: \"%ls\"", svcName);
+            WcaLog(LOGMSG_STANDARD, "Service \"%ls\" start deferred by REGISTER_NOW.", svcName);
         }
     }
     else {
         WcaLog(LOGMSG_STANDARD, "Failed to create service: \"%ls\"", svcName);
     }
 
-    if (IsServiceRunningW(svcName)) {
-        WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is running.", svcName);
-    }
-    else {
-        WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is not running, try create and start service by shell", svcName);
-        TryCreateStartServiceByShell(svcName, svcBinary, szSvcDisplayName);
+    if (!serviceCreated || shouldStartService) {
+        if (IsServiceRunningW(svcName)) {
+            WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is running.", svcName);
+        }
+        else {
+            WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is not running, try create and start service by shell", svcName);
+            TryCreateStartServiceByShell(svcName, svcBinary, szSvcDisplayName, shouldStartService);
+        }
     }
 
 LExit:
@@ -853,7 +1013,7 @@ LExit:
     return WcaFinalize(er);
 }
 
-void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvcDisplayName)
+void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvcDisplayName, BOOL shouldStartService)
 {
     HRESULT hr = S_OK;
     HINSTANCE hi = 0;
@@ -911,6 +1071,11 @@ void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvc
     }
     else {
         WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is created with shell.", svcName);
+    }
+
+    if (!shouldStartService) {
+        WcaLog(LOGMSG_STANDARD, "Service \"%ls\" start deferred by REGISTER_NOW.", svcName);
+        return;
     }
 
     // Query and log if the service is running.

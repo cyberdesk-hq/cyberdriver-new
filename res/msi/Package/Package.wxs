@@ -11,6 +11,11 @@
 		<!--<PropertyRef Id="UpgradesFile" />-->
 
 		<PropertyRef Id="AddRemovePropertiesFile" />
+		<Property Id="INSTALL_AS_SERVICE" Secure="yes" />
+		<Property Id="REGISTER_NOW" Secure="yes" />
+		<Property Id="CYBERDESK_API_BASE" Secure="yes" />
+		<Property Id="APIKEY" Secure="yes" Hidden="yes" />
+		<Property Id="MsiHiddenProperties" Value="APIKEY;ConfigureCyberdesk" />
 
 		<Media Id="1" Cabinet="cab1.cab" EmbedCab="yes" CompressionLevel="high" />
 		<Icon Id="AppIcon" SourceFile="Resources\icon.ico" />
