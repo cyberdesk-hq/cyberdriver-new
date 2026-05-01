@@ -22,7 +22,8 @@ use super::{
 use futures_util::{SinkExt, StreamExt};
 use hbb_common::anyhow::{anyhow, bail, Context, Result};
 use hbb_common::{log, tokio};
-use std::collections::HashMap;
+use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, http::HeaderValue, Message},
@@ -33,6 +34,8 @@ use tokio_tungstenite::{
 /// agent, not a foreign client.
 const VERSION: &str = concat!("cyberdriver-rs/", env!("CARGO_PKG_VERSION"));
 const MAX_REQUEST_BODY_BYTES: usize = 150 * 1024 * 1024;
+const MAX_IDEMPOTENCY_ENTRIES: usize = 128;
+const MAX_IDEMPOTENCY_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// Open the tunnel and run the request loop until the WS closes.
 pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Result<()> {
@@ -80,6 +83,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
     let mut pending_meta: Option<RequestMeta> = None;
     let mut pending_body: Vec<u8> = Vec::new();
     let mut pending_error: Option<(u16, Vec<u8>, &'static str)> = None;
+    let mut idempotency_cache = IdempotencyCache::default();
 
     loop {
         let msg = match read.next().await {
@@ -106,25 +110,20 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     let method = meta.method.clone();
                     let log_path = log_path(&meta.path);
                     let request_id = meta.request_id.clone();
+                    let idempotency_key = idempotency_key(&meta);
                     let (status, response_body, content_type) = match pending_error.take() {
                         Some(response) => response,
                         None => {
-                            match tokio::task::spawn_blocking(move || {
-                                let request =
-                                    ReverseTunnelRequest::from_websocket_frames(&meta, &body);
-                                dispatch::dispatch(request)
-                            })
-                            .await
-                            {
-                                Ok(response) => response,
-                                Err(err) => {
-                                    log::error!("cyberdesk_tunnel: dispatch task failed: {err}");
-                                    (
-                                        500,
-                                        br#"{"error":"cyberdesk_tunnel dispatch failed"}"#.to_vec(),
-                                        "application/json",
-                                    )
+                            if let Some(key) = idempotency_key.as_deref() {
+                                if let Some(response) = idempotency_cache.get(key) {
+                                    response
+                                } else {
+                                    let response = run_dispatch(meta, body).await;
+                                    idempotency_cache.insert(key.to_string(), &response);
+                                    response
                                 }
+                            } else {
+                                run_dispatch(meta, body).await
                             }
                         }
                     };
@@ -257,6 +256,69 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
 
     log::info!("cyberdesk_tunnel: read loop ended");
     Ok(())
+}
+
+async fn run_dispatch(meta: RequestMeta, body: Vec<u8>) -> (u16, Vec<u8>, &'static str) {
+    match tokio::task::spawn_blocking(move || {
+        let request = ReverseTunnelRequest::from_websocket_frames(&meta, &body);
+        dispatch::dispatch(request)
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            log::error!("cyberdesk_tunnel: dispatch task failed: {err}");
+            (
+                500,
+                br#"{"error":"cyberdesk_tunnel dispatch failed"}"#.to_vec(),
+                "application/json",
+            )
+        }
+    }
+}
+
+#[derive(Default)]
+struct IdempotencyCache {
+    order: VecDeque<String>,
+    entries: HashMap<String, (u16, Vec<u8>, &'static str)>,
+}
+
+impl IdempotencyCache {
+    fn get(&self, key: &str) -> Option<(u16, Vec<u8>, &'static str)> {
+        self.entries.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: String, response: &(u16, Vec<u8>, &'static str)) {
+        if response.1.len() > MAX_IDEMPOTENCY_BODY_BYTES {
+            return;
+        }
+        if !self.entries.contains_key(&key) {
+            self.order.push_back(key.clone());
+        }
+        self.entries.insert(key, response.clone());
+        while self.entries.len() > MAX_IDEMPOTENCY_ENTRIES {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+fn idempotency_key(meta: &RequestMeta) -> Option<String> {
+    header_value(&meta.headers, "x-idempotency-key")
+        .or_else(|| header_value(&meta.headers, "idempotency-key"))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {
+    let map = headers.as_object()?;
+    map.iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .and_then(|(_, value)| value.as_str())
 }
 
 /// Best-effort local hostname for the X-Piglet-Hostname header. Used

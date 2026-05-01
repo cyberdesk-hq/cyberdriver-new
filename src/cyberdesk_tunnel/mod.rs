@@ -16,6 +16,7 @@
 
 use hbb_common::{config, log};
 use serde_derive::{Deserialize, Serialize};
+use std::time::Duration;
 
 mod client;
 mod dispatch;
@@ -23,6 +24,8 @@ mod display;
 mod framing;
 mod fs;
 mod input;
+mod internal;
+mod shell;
 
 fn path_without_query(path: &str) -> &str {
     path.split_once('?').map(|(path, _)| path).unwrap_or(path)
@@ -70,11 +73,32 @@ pub fn spawn_if_enabled() {
     // Schedule onto RustDesk's existing tokio runtime via hbb_common's
     // re-export. We deliberately do NOT create a new runtime here.
     hbb_common::tokio::spawn(async move {
-        match client::run(api_key, api_base, fingerprint).await {
-            Ok(()) => log::info!("cyberdesk_tunnel: client exited cleanly"),
-            Err(e) => log::error!("cyberdesk_tunnel: client exited with error: {e:?}"),
+        let mut backoff = Duration::from_secs(1);
+        loop {
+            match client::run(api_key.clone(), api_base.clone(), fingerprint.clone()).await {
+                Ok(()) => log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting"),
+                Err(e) => {
+                    let message = format!("{e:?}");
+                    log::error!("cyberdesk_tunnel: client exited with error: {message}");
+                    if is_non_retryable_auth_error(&message) {
+                        log::error!("cyberdesk_tunnel: auth rejected; tunnel will not reconnect");
+                        break;
+                    }
+                }
+            }
+
+            hbb_common::tokio::time::sleep(backoff).await;
+            backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
         }
     });
+}
+
+fn is_non_retryable_auth_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("close 4001")
+        || lower.contains("server rejected auth")
+        || lower.contains("401")
+        || lower.contains("403")
 }
 
 fn default_api_base() -> String {
