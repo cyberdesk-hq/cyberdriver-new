@@ -336,15 +336,15 @@ Security:
 }
 
 fn api_base_from_host(host: &str) -> String {
-    if host.starts_with("ws://") || host.starts_with("wss://") {
-        host.to_string()
-    } else {
-        format!("wss://{host}")
-    }
+    format!("wss://{host}")
 }
 
 fn validate_api_base(raw: &str) -> Result<String, String> {
     let value = raw.trim();
+    if value.is_empty() {
+        return Err("error: --api-base must not be empty".to_string());
+    }
+
     let lower_value = value.to_ascii_lowercase();
     if lower_value.starts_with("wss://") {
         return Ok(format!("wss://{}", &value["wss://".len()..]));
@@ -439,6 +439,8 @@ mod tests {
 
     #[test]
     fn validate_api_base_rejects_insecure_non_loopback() {
+        assert!(validate_api_base("").is_err());
+        assert!(validate_api_base("   ").is_err());
         assert!(validate_api_base("ws://api.cyberdesk.io").is_err());
         assert!(validate_api_base("http://10.0.0.10:8080").is_err());
         assert!(validate_api_base("HTTP://10.0.0.10:8080").is_err());
