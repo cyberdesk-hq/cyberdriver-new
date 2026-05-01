@@ -191,8 +191,12 @@ fn decode_configured_api_key(value: &str) -> Option<(String, bool)> {
         return None;
     }
 
-    let (api_key, _decrypted, should_store) =
+    let (api_key, decrypted, should_store) =
         decrypt_str_or_original(value, API_KEY_ENC_VERSION);
+    if value.starts_with(API_KEY_ENC_VERSION) && !decrypted {
+        log::error!("cyberdesk_tunnel: stored Cyberdesk API key could not be decrypted");
+        return None;
+    }
     let api_key = api_key.trim().to_string();
     if api_key.is_empty() {
         None
@@ -366,5 +370,14 @@ mod tests {
             decode_configured_api_key(&encrypted),
             Some(("ak_encrypted".to_string(), false))
         );
+    }
+
+    #[test]
+    fn decode_configured_api_key_rejects_undecryptable_encrypted_value() {
+        let mut encrypted =
+            encrypt_str_or_original("ak_encrypted", API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
+        encrypted.push('x');
+
+        assert_eq!(decode_configured_api_key(&encrypted), None);
     }
 }
