@@ -11,13 +11,19 @@ use super::parse_json;
 use hbb_common::anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 #[cfg(not(windows))]
 use std::sync::OnceLock;
 use std::{
     io::Read,
     path::PathBuf,
     process::{Command, Stdio},
-    thread::{self, JoinHandle},
+    sync::{
+        mpsc::{self, Receiver, RecvTimeoutError},
+        Arc, Mutex, MutexGuard,
+    },
+    thread,
     time::{Duration, Instant},
 };
 
@@ -50,6 +56,11 @@ struct PowerShellExecResponse {
 struct CappedOutput {
     bytes: Vec<u8>,
     truncated: bool,
+}
+
+struct OutputReader {
+    output: Arc<Mutex<CappedOutput>>,
+    done: Receiver<()>,
 }
 
 pub fn simple() -> Result<Vec<u8>> {
@@ -134,7 +145,8 @@ fn run_command(
     session_id: Option<String>,
 ) -> Result<PowerShellExecResponse> {
     let executable = powershell_executable();
-    let mut child = Command::new(executable)
+    let mut powershell = Command::new(executable);
+    powershell
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -149,7 +161,12 @@ fn run_command(
         .current_dir(resolve_working_directory(working_directory)?)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        powershell.process_group(0);
+    }
+    let mut child = powershell
         .spawn()
         .with_context(|| format!("failed to spawn {executable}"))?;
 
@@ -184,13 +201,13 @@ fn run_command(
             });
         }
         if start.elapsed() >= timeout {
-            let _ = child.kill();
+            terminate_process_tree(&mut child);
             let wait_error = child
                 .wait()
                 .err()
                 .map(|err| format!("failed to wait for timed-out PowerShell process: {err}"));
-            let stdout = collect_output(stdout_reader);
-            let stderr = collect_output(stderr_reader);
+            let stdout = collect_output_after_timeout(stdout_reader);
+            let stderr = collect_output_after_timeout(stderr_reader);
             let timeout_message = wait_error.unwrap_or_else(|| {
                 format!(
                     "Command timeout reached after {:.1} seconds. Process was terminated.",
@@ -215,21 +232,25 @@ fn run_command(
     }
 }
 
-fn spawn_output_reader<R>(mut reader: R) -> JoinHandle<CappedOutput>
+fn spawn_output_reader<R>(mut reader: R) -> OutputReader
 where
     R: Read + Send + 'static,
 {
+    let output = Arc::new(Mutex::new(CappedOutput {
+        bytes: Vec::with_capacity(MAX_OUTPUT_CHARS.min(8 * 1024)),
+        truncated: false,
+    }));
+    let thread_output = output.clone();
+    let (done_tx, done_rx) = mpsc::channel();
+
     thread::spawn(move || {
-        let mut output = CappedOutput {
-            bytes: Vec::with_capacity(MAX_OUTPUT_CHARS.min(8 * 1024)),
-            truncated: false,
-        };
         let mut buffer = [0_u8; 8 * 1024];
 
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(read) => {
+                    let mut output = lock_output(&thread_output);
                     let remaining = MAX_OUTPUT_CHARS.saturating_sub(output.bytes.len());
                     if remaining > 0 {
                         output
@@ -242,21 +263,75 @@ where
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => {
-                    output.truncated = true;
+                    lock_output(&thread_output).truncated = true;
                     break;
                 }
             }
         }
 
-        output
-    })
+        let _ = done_tx.send(());
+    });
+
+    OutputReader {
+        output,
+        done: done_rx,
+    }
 }
 
-fn collect_output(reader: JoinHandle<CappedOutput>) -> String {
-    match reader.join() {
-        Ok(output) => capped_output_to_string(output),
+fn collect_output(reader: OutputReader) -> String {
+    match reader.done.recv() {
+        Ok(()) => capped_output_to_string(snapshot_output(&reader.output, false)),
         Err(_) => "failed to collect PowerShell output: reader thread panicked".to_string(),
     }
+}
+
+fn collect_output_after_timeout(reader: OutputReader) -> String {
+    match reader.done.recv_timeout(Duration::from_millis(100)) {
+        Ok(()) => capped_output_to_string(snapshot_output(&reader.output, false)),
+        Err(RecvTimeoutError::Timeout) => {
+            capped_output_to_string(snapshot_output(&reader.output, true))
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            "failed to collect PowerShell output: reader thread panicked".to_string()
+        }
+    }
+}
+
+fn snapshot_output(output: &Arc<Mutex<CappedOutput>>, mark_truncated: bool) -> CappedOutput {
+    let output = lock_output(output);
+    CappedOutput {
+        bytes: output.bytes.clone(),
+        truncated: output.truncated || (mark_truncated && !output.bytes.is_empty()),
+    }
+}
+
+fn lock_output(output: &Arc<Mutex<CappedOutput>>) -> MutexGuard<'_, CappedOutput> {
+    match output.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn terminate_process_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{}", child.id())])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
 }
 
 fn capped_output_to_string(output: CappedOutput) -> String {

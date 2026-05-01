@@ -96,8 +96,7 @@ pub fn spawn_if_enabled() {
             let should_increase_backoff = match result {
                 Ok(()) => {
                     log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
-                    backoff = Duration::from_secs(1);
-                    false
+                    true
                 }
                 Err(e) => {
                     let message = format!("{e:?}");
