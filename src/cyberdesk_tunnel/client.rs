@@ -289,6 +289,9 @@ impl IdempotencyCache {
     }
 
     fn insert(&mut self, key: String, response: &(u16, Vec<u8>, &'static str)) {
+        if response.0 >= 500 {
+            return;
+        }
         if response.1.len() > MAX_IDEMPOTENCY_BODY_BYTES {
             return;
         }

@@ -76,7 +76,10 @@ pub fn spawn_if_enabled() {
         let mut backoff = Duration::from_secs(1);
         loop {
             match client::run(api_key.clone(), api_base.clone(), fingerprint.clone()).await {
-                Ok(()) => log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting"),
+                Ok(()) => {
+                    log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
+                    backoff = Duration::from_secs(1);
+                }
                 Err(e) => {
                     let message = format!("{e:?}");
                     log::error!("cyberdesk_tunnel: client exited with error: {message}");
@@ -97,8 +100,26 @@ fn is_non_retryable_auth_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("close 4001")
         || lower.contains("server rejected auth")
-        || lower.contains("401")
-        || lower.contains("403")
+        || contains_auth_status(&lower, "401", "unauthorized")
+        || contains_auth_status(&lower, "403", "forbidden")
+}
+
+fn contains_auth_status(message: &str, status: &str, status_text: &str) -> bool {
+    let status_patterns = [
+        format!("http {status}"),
+        format!("http status {status}"),
+        format!("status {status}"),
+        format!("status: {status}"),
+        format!("status={status}"),
+        format!("{status} {status_text}"),
+        format!("{status}: {status_text}"),
+        format!("{status} ({status_text})"),
+        format!("({status} {status_text})"),
+    ];
+
+    status_patterns
+        .iter()
+        .any(|pattern| message.contains(pattern))
 }
 
 fn default_api_base() -> String {

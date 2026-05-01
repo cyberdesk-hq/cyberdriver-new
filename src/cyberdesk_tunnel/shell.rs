@@ -170,7 +170,7 @@ fn run_command(
                     "Command timeout reached after {:.1} seconds. Process continues in background.",
                     timeout.as_secs_f64()
                 ),
-                exit_code: 0,
+                exit_code: 124,
                 session_id: session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 timeout_reached: Some(true),
                 error: None,
@@ -207,7 +207,11 @@ fn resolve_working_directory(working_directory: Option<&str>) -> Result<PathBuf>
 
 fn truncate_output(mut output: String) -> String {
     if output.len() > MAX_OUTPUT_CHARS {
-        output.truncate(MAX_OUTPUT_CHARS);
+        let mut truncate_at = MAX_OUTPUT_CHARS;
+        while !output.is_char_boundary(truncate_at) {
+            truncate_at -= 1;
+        }
+        output.truncate(truncate_at);
         output.push_str("\n...<truncated>");
     }
     output
