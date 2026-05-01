@@ -177,4 +177,3 @@ Properties:
 - `REGISTER_NOW=0`: create the service but do not start it during install.
 
 If `REGISTER_NOW` is omitted, the service starts immediately after install.
-
