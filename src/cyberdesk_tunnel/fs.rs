@@ -234,7 +234,7 @@ fn atomic_write(target_path: &PathBuf, data: &[u8]) -> Result<()> {
         uuid::Uuid::new_v4()
     ));
 
-    {
+    let write_result = (|| -> Result<()> {
         let mut file = fs::OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -243,6 +243,12 @@ fn atomic_write(target_path: &PathBuf, data: &[u8]) -> Result<()> {
         file.write_all(data)
             .context("failed to write temporary file")?;
         file.sync_all().ok();
+        Ok(())
+    })();
+
+    if let Err(err) = write_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(err);
     }
 
     match fs::rename(&temp_path, target_path) {
