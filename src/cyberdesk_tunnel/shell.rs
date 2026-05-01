@@ -14,8 +14,10 @@ use serde_json::json;
 #[cfg(not(windows))]
 use std::sync::OnceLock;
 use std::{
+    io::Read,
     path::PathBuf,
     process::{Command, Stdio},
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -43,6 +45,11 @@ struct PowerShellExecResponse {
     timeout_reached: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+struct CappedOutput {
+    bytes: Vec<u8>,
+    truncated: bool,
 }
 
 pub fn simple() -> Result<Vec<u8>> {
@@ -146,6 +153,17 @@ fn run_command(
         .spawn()
         .with_context(|| format!("failed to spawn {executable}"))?;
 
+    let stdout_reader = child
+        .stdout
+        .take()
+        .map(spawn_output_reader)
+        .context("PowerShell stdout pipe was not captured")?;
+    let stderr_reader = child
+        .stderr
+        .take()
+        .map(spawn_output_reader)
+        .context("PowerShell stderr pipe was not captured")?;
+
     let timeout = Duration::from_secs_f64(
         timeout_seconds
             .unwrap_or(30.0)
@@ -154,12 +172,11 @@ fn run_command(
     let start = Instant::now();
     loop {
         if let Some(status) = child.try_wait().context("failed waiting for PowerShell")? {
-            let output = child
-                .wait_with_output()
-                .context("failed collecting PowerShell output")?;
+            let stdout = collect_output(stdout_reader);
+            let stderr = collect_output(stderr_reader);
             return Ok(PowerShellExecResponse {
-                stdout: truncate_output(String::from_utf8_lossy(&output.stdout).trim().to_string()),
-                stderr: truncate_output(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+                stdout,
+                stderr,
                 exit_code: status.code().unwrap_or(-1),
                 session_id: session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 timeout_reached: None,
@@ -168,26 +185,22 @@ fn run_command(
         }
         if start.elapsed() >= timeout {
             let _ = child.kill();
-            let (stdout, stderr) = match child.wait_with_output() {
-                Ok(output) => (
-                    truncate_output(String::from_utf8_lossy(&output.stdout).trim().to_string()),
-                    truncate_output(String::from_utf8_lossy(&output.stderr).trim().to_string()),
-                ),
-                Err(err) => (
-                    String::new(),
-                    format!("failed to collect timed-out process output: {err}"),
-                ),
-            };
-            let stderr = if stderr.is_empty() {
+            let wait_error = child
+                .wait()
+                .err()
+                .map(|err| format!("failed to wait for timed-out PowerShell process: {err}"));
+            let stdout = collect_output(stdout_reader);
+            let stderr = collect_output(stderr_reader);
+            let timeout_message = wait_error.unwrap_or_else(|| {
                 format!(
                     "Command timeout reached after {:.1} seconds. Process was terminated.",
                     timeout.as_secs_f64()
                 )
+            });
+            let stderr = if stderr.is_empty() {
+                timeout_message
             } else {
-                format!(
-                    "{stderr}\nCommand timeout reached after {:.1} seconds. Process was terminated.",
-                    timeout.as_secs_f64()
-                )
+                format!("{stderr}\n{timeout_message}")
             };
             return Ok(PowerShellExecResponse {
                 stdout,
@@ -200,6 +213,61 @@ fn run_command(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn spawn_output_reader<R>(mut reader: R) -> JoinHandle<CappedOutput>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut output = CappedOutput {
+            bytes: Vec::with_capacity(MAX_OUTPUT_CHARS.min(8 * 1024)),
+            truncated: false,
+        };
+        let mut buffer = [0_u8; 8 * 1024];
+
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    let remaining = MAX_OUTPUT_CHARS.saturating_sub(output.bytes.len());
+                    if remaining > 0 {
+                        output
+                            .bytes
+                            .extend_from_slice(&buffer[..read.min(remaining)]);
+                    }
+                    if read > remaining {
+                        output.truncated = true;
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    output.truncated = true;
+                    break;
+                }
+            }
+        }
+
+        output
+    })
+}
+
+fn collect_output(reader: JoinHandle<CappedOutput>) -> String {
+    match reader.join() {
+        Ok(output) => capped_output_to_string(output),
+        Err(_) => "failed to collect PowerShell output: reader thread panicked".to_string(),
+    }
+}
+
+fn capped_output_to_string(output: CappedOutput) -> String {
+    let mut text = truncate_output(String::from_utf8_lossy(&output.bytes).trim().to_string());
+    if output.truncated && !text.ends_with("...<truncated>") {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str("...<truncated>");
+    }
+    text
 }
 
 fn powershell_executable() -> &'static str {
