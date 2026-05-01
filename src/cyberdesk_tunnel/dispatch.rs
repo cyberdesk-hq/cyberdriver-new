@@ -94,7 +94,7 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(400, format!("fs read failed: {err:#}")),
         },
-        ("POST", "/computer/fs/write") => match fs::write(body) {
+        ("POST", "/computer/fs/write" | "computer/fs/write") => match fs::write(body) {
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(400, format!("fs write failed: {err:#}")),
         },

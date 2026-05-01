@@ -248,9 +248,6 @@ fn atomic_write(target_path: &PathBuf, data: &[u8]) -> Result<()> {
         file.sync_all().ok();
     }
 
-    if target_path.exists() {
-        fs::remove_file(target_path).context("failed to replace existing file")?;
-    }
     match fs::rename(&temp_path, target_path) {
         Ok(()) => Ok(()),
         Err(err) => {
