@@ -45,7 +45,17 @@ pub fn sanitize_machine_name(raw: Option<&str>) -> Option<String> {
     if !name.chars().all(|ch| matches!(ch as u32, 0x20..=0x7e)) {
         return None;
     }
-    Some(name.chars().take(NAME_MAX_LEN).collect())
+    let name = name
+        .chars()
+        .take(NAME_MAX_LEN)
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 fn apply_transient_name_from_args(args: &[String]) {
@@ -438,6 +448,14 @@ mod tests {
         let raw = "a".repeat(NAME_MAX_LEN + 1);
         let sanitized = sanitize_machine_name(Some(&raw));
         assert_eq!(sanitized.as_ref().map(|value| value.len()), Some(NAME_MAX_LEN));
+    }
+
+    #[test]
+    fn sanitize_machine_name_trims_after_truncation() {
+        let raw = format!("{} b", "a".repeat(NAME_MAX_LEN - 1));
+        let sanitized = sanitize_machine_name(Some(&raw));
+        assert_eq!(sanitized, Some("a".repeat(NAME_MAX_LEN - 1)));
+        assert!(!sanitized.unwrap_or_default().ends_with(' '));
     }
 
     #[test]

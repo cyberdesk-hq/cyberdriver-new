@@ -165,18 +165,40 @@ pub(crate) fn configured_api_key() -> Option<String> {
         .filter(|value| !value.is_empty())
         .or_else(|| {
             let value = config::LocalConfig::get_option("cyberdesk_api_key");
-            let value = value.trim();
-            if value.is_empty() {
-                None
-            } else {
-                let (api_key, _decrypted, should_store) =
-                    decrypt_str_or_original(value, API_KEY_ENC_VERSION);
-                if should_store {
-                    let _ = store_configured_api_key(api_key.clone());
+            match decode_configured_api_key(&value) {
+                Some((api_key, should_store)) => {
+                    if should_store {
+                        let _ = store_configured_api_key(api_key.clone());
+                    }
+                    Some(api_key)
                 }
-                Some(api_key)
+                None => {
+                    if !value.trim().is_empty() {
+                        config::LocalConfig::set_option(
+                            "cyberdesk_api_key".to_string(),
+                            String::new(),
+                        );
+                    }
+                    None
+                }
             }
         })
+}
+
+fn decode_configured_api_key(value: &str) -> Option<(String, bool)> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let (api_key, _decrypted, should_store) =
+        decrypt_str_or_original(value, API_KEY_ENC_VERSION);
+    let api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        None
+    } else {
+        Some((api_key, should_store))
+    }
 }
 
 pub(crate) fn store_configured_api_key(api_key: String) -> Result<(), &'static str> {
@@ -304,5 +326,37 @@ fn legacy_config_path() -> Option<PathBuf> {
                 std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
             })?;
         Some(base.join(".cyberdriver").join("config.json"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_configured_api_key, API_KEY_ENC_VERSION, API_KEY_MAX_LEN};
+    use hbb_common::password_security::encrypt_str_or_original;
+
+    #[test]
+    fn decode_configured_api_key_omits_empty_values() {
+        assert_eq!(decode_configured_api_key(""), None);
+        assert_eq!(decode_configured_api_key("   "), None);
+
+        let encrypted_empty = encrypt_str_or_original("", API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
+        assert_eq!(decode_configured_api_key(&encrypted_empty), None);
+    }
+
+    #[test]
+    fn decode_configured_api_key_trims_plaintext_and_marks_for_migration() {
+        assert_eq!(
+            decode_configured_api_key("  ak_test  "),
+            Some(("ak_test".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn decode_configured_api_key_reads_encrypted_value() {
+        let encrypted = encrypt_str_or_original("ak_encrypted", API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
+        assert_eq!(
+            decode_configured_api_key(&encrypted),
+            Some(("ak_encrypted".to_string(), false))
+        );
     }
 }
