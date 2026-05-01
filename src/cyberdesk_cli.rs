@@ -377,12 +377,21 @@ fn is_loopback_api_base(value: &str) -> bool {
         return false;
     };
     let host_port_path = rest.split('/').next().unwrap_or("");
-    let host = host_port_path
+    let authority = host_port_path
         .rsplit_once('@')
         .map(|(_, host)| host)
-        .unwrap_or(host_port_path)
-        .trim_matches(['[', ']']);
-    let host = host.rsplit_once(':').map(|(host, _)| host).unwrap_or(host);
+        .unwrap_or(host_port_path);
+    let host = if let Some(bracketed) = authority.strip_prefix('[') {
+        bracketed
+            .split_once(']')
+            .map(|(host, _)| host)
+            .unwrap_or(authority)
+    } else {
+        authority
+            .rsplit_once(':')
+            .map(|(host, _)| host)
+            .unwrap_or(authority)
+    };
     matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
@@ -463,6 +472,14 @@ mod tests {
         assert_eq!(
             validate_api_base("http://127.0.0.1:8080"),
             Ok("ws://127.0.0.1:8080".to_string())
+        );
+        assert_eq!(
+            validate_api_base("ws://[::1]:8080"),
+            Ok("ws://[::1]:8080".to_string())
+        );
+        assert_eq!(
+            validate_api_base("http://[::1]"),
+            Ok("ws://[::1]".to_string())
         );
     }
 }
