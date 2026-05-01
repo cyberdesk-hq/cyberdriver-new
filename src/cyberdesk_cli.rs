@@ -214,10 +214,15 @@ fn ensure_runtime_display_available() -> Result<(), &'static str> {
 }
 
 fn reset_fingerprint() {
-    crate::cyberdesk_tunnel::reset_fingerprint();
-    println!(
-        "Cyberdriver fingerprint reset. A new fingerprint will be generated on next tunnel start."
-    );
+    match crate::cyberdesk_tunnel::reset_fingerprint() {
+        Ok(_) => println!(
+            "Cyberdriver fingerprint reset. A new fingerprint will be generated on next tunnel start."
+        ),
+        Err(err) => {
+            eprintln!("failed to reset Cyberdriver fingerprint: {err}");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn print_status() {

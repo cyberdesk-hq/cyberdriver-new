@@ -251,13 +251,15 @@ pub fn current_fingerprint() -> Option<String> {
     }
 }
 
-pub fn reset_fingerprint() {
+pub fn reset_fingerprint() -> Result<()> {
     let path = config_path();
     let mut tunnel_config = config::load_path::<TunnelConfig>(path.clone());
     tunnel_config.fingerprint.clear();
     if let Err(err) = config::store_path(path, &tunnel_config) {
         log::error!("cyberdesk_tunnel: failed to reset fingerprint: {err}");
+        return Err(err);
     }
+    Ok(())
 }
 
 fn maybe_reset_fingerprint_from_env() {
@@ -265,9 +267,15 @@ fn maybe_reset_fingerprint_from_env() {
         std::env::var("CYBERDRIVER_RESET_FINGERPRINT"),
         Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
     ) {
-        reset_fingerprint();
+        match reset_fingerprint() {
+            Ok(_) => log::info!(
+                "cyberdesk_tunnel: reset fingerprint from CYBERDRIVER_RESET_FINGERPRINT"
+            ),
+            Err(err) => log::error!(
+                "cyberdesk_tunnel: failed to reset fingerprint from CYBERDRIVER_RESET_FINGERPRINT: {err}"
+            ),
+        }
         std::env::remove_var("CYBERDRIVER_RESET_FINGERPRINT");
-        log::info!("cyberdesk_tunnel: reset fingerprint from CYBERDRIVER_RESET_FINGERPRINT");
     }
 }
 
