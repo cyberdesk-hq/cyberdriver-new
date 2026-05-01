@@ -32,6 +32,7 @@ use tokio_tungstenite::{
 /// send so the cloud's logging + analytics treat this as a Cyberdriver
 /// agent, not a foreign client.
 const VERSION: &str = concat!("cyberdriver-rs/", env!("CARGO_PKG_VERSION"));
+const MAX_REQUEST_BODY_BYTES: usize = 150 * 1024 * 1024;
 
 /// Open the tunnel and run the request loop until the WS closes.
 pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Result<()> {
@@ -78,6 +79,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
     //   text(meta JSON)  ->  [binary chunks]  ->  text("end")
     let mut pending_meta: Option<RequestMeta> = None;
     let mut pending_body: Vec<u8> = Vec::new();
+    let mut pending_error: Option<(u16, Vec<u8>, &'static str)> = None;
 
     loop {
         let msg = match read.next().await {
@@ -104,23 +106,28 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     let method = meta.method.clone();
                     let log_path = log_path(&meta.path);
                     let request_id = meta.request_id.clone();
-                    let (status, response_body, content_type) =
-                        match tokio::task::spawn_blocking(move || {
-                            let request = ReverseTunnelRequest::from_websocket_frames(&meta, &body);
-                            dispatch::dispatch(request)
-                        })
-                        .await
-                        {
-                            Ok(response) => response,
-                            Err(err) => {
-                                log::error!("cyberdesk_tunnel: dispatch task failed: {err}");
-                                (
-                                    500,
-                                    br#"{"error":"cyberdesk_tunnel dispatch failed"}"#.to_vec(),
-                                    "application/json",
-                                )
+                    let (status, response_body, content_type) = match pending_error.take() {
+                        Some(response) => response,
+                        None => {
+                            match tokio::task::spawn_blocking(move || {
+                                let request =
+                                    ReverseTunnelRequest::from_websocket_frames(&meta, &body);
+                                dispatch::dispatch(request)
+                            })
+                            .await
+                            {
+                                Ok(response) => response,
+                                Err(err) => {
+                                    log::error!("cyberdesk_tunnel: dispatch task failed: {err}");
+                                    (
+                                        500,
+                                        br#"{"error":"cyberdesk_tunnel dispatch failed"}"#.to_vec(),
+                                        "application/json",
+                                    )
+                                }
                             }
-                        };
+                        }
+                    };
 
                     log::info!(
                         "cyberdesk_tunnel: {} {} -> {} ({} bytes, request_id={})",
@@ -171,6 +178,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                         );
                         pending_meta = None;
                         pending_body.clear();
+                        pending_error = None;
                     }
 
                     let meta: RequestMeta = match serde_json::from_str(text_str) {
@@ -185,6 +193,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                         }
                     };
                     pending_meta = Some(meta);
+                    pending_error = None;
                 }
             }
 
@@ -195,6 +204,18 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                          request metadata; dropping",
                         data.len()
                     );
+                    continue;
+                }
+                if pending_error.is_some() {
+                    continue;
+                }
+                if pending_body.len().saturating_add(data.len()) > MAX_REQUEST_BODY_BYTES {
+                    log::warn!(
+                        "cyberdesk_tunnel: request body exceeded {} byte limit; dropping body",
+                        MAX_REQUEST_BODY_BYTES
+                    );
+                    pending_body.clear();
+                    pending_error = Some(request_body_too_large_response());
                     continue;
                 }
                 pending_body.extend_from_slice(&data);
@@ -242,6 +263,18 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
 /// only for cloud-side display (`Machine.hostname` column).
 fn hostname() -> String {
     crate::common::hostname()
+}
+
+fn request_body_too_large_response() -> (u16, Vec<u8>, &'static str) {
+    (
+        413,
+        format!(
+            r#"{{"error":"request body exceeds {} byte limit"}}"#,
+            MAX_REQUEST_BODY_BYTES
+        )
+        .into_bytes(),
+        "application/json",
+    )
 }
 
 fn log_path(path: &str) -> String {

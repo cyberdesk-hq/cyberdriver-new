@@ -11,8 +11,9 @@
 // M7 handles the first read-only filesystem slice:
 //   GET /computer/fs/list
 //   GET /computer/fs/read
+// M7 filesystem write:
+//   POST /computer/fs/write
 // Future milestones add:
-//       POST /computer/fs/write               (tokio::fs)
 //       POST /computer/shell/powershell/*     (tokio::process)
 //       /internal/{shutdown,diagnostics,update,keepalive/*}
 //
@@ -92,6 +93,10 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
         ("GET", "/computer/fs/read" | "computer/fs/read") => match fs::read(meta) {
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(400, format!("fs read failed: {err:#}")),
+        },
+        ("POST", "/computer/fs/write" | "computer/fs/write") => match fs::write(body) {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(400, format!("fs write failed: {err:#}")),
         },
         _ => (
             501,
