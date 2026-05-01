@@ -518,7 +518,15 @@ fn option_value(args: &[String], name: &str) -> Option<String> {
 fn is_known_option(value: &str) -> bool {
     matches!(
         value,
-        "--secret" | "--name" | "--api-base" | "--host" | "-h" | "--help"
+        "--secret"
+            | "--name"
+            | "--api-base"
+            | "--host"
+            | "--api-key"
+            | "--stdin"
+            | "--reset-fingerprint"
+            | "-h"
+            | "--help"
     )
 }
 
@@ -571,6 +579,19 @@ mod tests {
         ];
         assert_eq!(option_value(&args, "--name"), None);
         assert_eq!(option_value(&args, "--secret"), Some("ak_test".to_string()));
+    }
+
+    #[test]
+    fn option_value_does_not_treat_msi_flags_as_values() {
+        let args = vec![
+            "__cyberdesk-msi-configure".to_string(),
+            "--api-base".to_string(),
+            "--api-key".to_string(),
+            "ak_test".to_string(),
+            "--reset-fingerprint".to_string(),
+        ];
+        assert_eq!(option_value(&args, "--api-base"), None);
+        assert_eq!(option_value(&args, "--api-key"), Some("ak_test".to_string()));
     }
 
     #[test]
