@@ -93,10 +93,9 @@ pub fn spawn_if_enabled() {
                 dispatch_semaphore.clone(),
             )
             .await;
-            let should_increase_backoff = match result {
+            match result {
                 Ok(()) => {
                     log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
-                    true
                 }
                 Err(e) => {
                     let message = format!("{e:?}");
@@ -105,14 +104,11 @@ pub fn spawn_if_enabled() {
                         log::error!("cyberdesk_tunnel: auth rejected; tunnel will not reconnect");
                         break;
                     }
-                    true
                 }
             };
 
             hbb_common::tokio::time::sleep(backoff).await;
-            if should_increase_backoff {
-                backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
-            }
+            backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
         }
     });
 }
