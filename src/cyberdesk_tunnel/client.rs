@@ -137,32 +137,20 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     let idempotency_key = idempotency_cache_key(&meta, &body);
                     let response = match pending_error.take() {
                         Some(response) => response,
-                        None => {
-                            if let Some(key) = idempotency_key.as_deref() {
-                                if let Some(response) = idempotency_cache.get(key) {
-                                    response
-                                } else {
-                                    match dispatch_semaphore.clone().try_acquire_owned() {
-                                        Ok(permit) => {
-                                            spawn_dispatch(
-                                                meta,
-                                                body,
-                                                Some(key.to_string()),
-                                                response_tx.clone(),
-                                                permit,
-                                            );
-                                            continue;
-                                        }
-                                        Err(_) => too_many_in_flight_response(),
-                                    }
-                                }
-                            } else {
+                        None => match idempotency_key
+                            .as_deref()
+                            .and_then(|key| idempotency_cache.get(key))
+                        {
+                            Some(response) => response,
+                            None => {
+                                let dispatch_idempotency_key =
+                                    idempotency_key.as_deref().map(ToOwned::to_owned);
                                 match dispatch_semaphore.clone().try_acquire_owned() {
                                     Ok(permit) => {
                                         spawn_dispatch(
                                             meta,
                                             body,
-                                            None,
+                                            dispatch_idempotency_key,
                                             response_tx.clone(),
                                             permit,
                                         );
@@ -171,7 +159,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                                     Err(_) => too_many_in_flight_response(),
                                 }
                             }
-                        }
+                        },
                     };
 
                     send_response(
@@ -323,7 +311,10 @@ where
         idempotency_key,
         response,
     } = dispatch_response;
-    let (status, response_body, content_type) = response.clone();
+    let (status, response_body, content_type) = response;
+    let cached_response = idempotency_key
+        .as_ref()
+        .map(|_| (status, response_body.clone(), content_type));
 
     log::info!(
         "cyberdesk_tunnel: {} {} -> {} ({} bytes, request_id={})",
@@ -366,7 +357,7 @@ where
         .await
         .context("sending response 'end' sentinel")?;
 
-    Ok(idempotency_key.map(|key| (key, response)))
+    Ok(idempotency_key.zip(cached_response))
 }
 
 async fn run_dispatch(meta: RequestMeta, body: Vec<u8>) -> ResponseTuple {

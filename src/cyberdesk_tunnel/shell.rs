@@ -11,6 +11,8 @@ use super::parse_json;
 use hbb_common::anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+#[cfg(not(windows))]
+use std::sync::OnceLock;
 use std::{
     path::PathBuf,
     process::{Command, Stdio},
@@ -125,7 +127,7 @@ fn run_command(
     session_id: Option<String>,
 ) -> Result<PowerShellExecResponse> {
     let executable = powershell_executable();
-    let mut child = Command::new(&executable)
+    let mut child = Command::new(executable)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -200,18 +202,21 @@ fn run_command(
     }
 }
 
-fn powershell_executable() -> String {
+fn powershell_executable() -> &'static str {
     #[cfg(windows)]
     {
-        "powershell".to_string()
+        "powershell"
     }
     #[cfg(not(windows))]
     {
-        if Command::new("pwsh").arg("-Version").output().is_ok() {
-            "pwsh".to_string()
-        } else {
-            "powershell".to_string()
-        }
+        static POWERSHELL_EXECUTABLE: OnceLock<&'static str> = OnceLock::new();
+        *POWERSHELL_EXECUTABLE.get_or_init(|| {
+            if Command::new("pwsh").arg("-Version").output().is_ok() {
+                "pwsh"
+            } else {
+                "powershell"
+            }
+        })
     }
 }
 
