@@ -182,6 +182,7 @@ fn spawn_join_runtime() -> std::io::Result<std::process::Child> {
     } else {
         command.env_remove(NAME_ENV);
     }
+    command.env_remove("CYBERDESK_AGENT_KEY");
     command.spawn()
 }
 
