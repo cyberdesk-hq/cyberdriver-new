@@ -6,7 +6,6 @@
 // read-only and lifecycle commands work on headless Linux machines where no
 // X11/Wayland display is available.
 
-use hbb_common::config::LocalConfig;
 use serde_json::json;
 
 const NAME_ENV: &str = "CYBERDRIVER_MACHINE_NAME";
@@ -145,9 +144,9 @@ fn run_join(join: JoinCommand) {
         std::process::exit(2);
     }
 
-    LocalConfig::set_option("cyberdesk_api_key".to_string(), join.secret);
+    crate::cyberdesk_tunnel::store_configured_api_key(join.secret);
     if let Some(api_base) = join.api_base {
-        LocalConfig::set_option("cyberdesk_api_base".to_string(), api_base);
+        crate::cyberdesk_tunnel::store_configured_api_base(api_base);
     }
 
     match spawn_join_runtime() {
