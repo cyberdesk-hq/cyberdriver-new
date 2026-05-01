@@ -14,8 +14,12 @@
 // builds (and our cyberdesk-connect-only build profile) don't pay the
 // dep cost or behavior change.
 
-use hbb_common::{config, log};
+use hbb_common::{
+    anyhow::{bail, Context, Result},
+    config, log,
+};
 use serde_derive::{Deserialize, Serialize};
+use std::time::Duration;
 
 mod client;
 mod dispatch;
@@ -23,9 +27,18 @@ mod display;
 mod framing;
 mod fs;
 mod input;
+mod internal;
+mod shell;
 
 fn path_without_query(path: &str) -> &str {
     path.split_once('?').map(|(path, _)| path).unwrap_or(path)
+}
+
+fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
+    if body.is_empty() {
+        bail!("missing JSON request body");
+    }
+    Ok(serde_json::from_slice(body).context("invalid JSON request body")?)
 }
 
 /// Entry point called from `src/server.rs::start_server` during
@@ -70,11 +83,60 @@ pub fn spawn_if_enabled() {
     // Schedule onto RustDesk's existing tokio runtime via hbb_common's
     // re-export. We deliberately do NOT create a new runtime here.
     hbb_common::tokio::spawn(async move {
-        match client::run(api_key, api_base, fingerprint).await {
-            Ok(()) => log::info!("cyberdesk_tunnel: client exited cleanly"),
-            Err(e) => log::error!("cyberdesk_tunnel: client exited with error: {e:?}"),
+        let mut backoff = Duration::from_secs(1);
+        let dispatch_semaphore = client::dispatch_semaphore();
+        loop {
+            let result = client::run(
+                api_key.clone(),
+                api_base.clone(),
+                fingerprint.clone(),
+                dispatch_semaphore.clone(),
+            )
+            .await;
+            match result {
+                Ok(()) => {
+                    log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
+                }
+                Err(e) => {
+                    let message = format!("{e:?}");
+                    log::error!("cyberdesk_tunnel: client exited with error: {message}");
+                    if is_non_retryable_auth_error(&message) {
+                        log::error!("cyberdesk_tunnel: auth rejected; tunnel will not reconnect");
+                        break;
+                    }
+                }
+            };
+
+            hbb_common::tokio::time::sleep(backoff).await;
+            backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
         }
     });
+}
+
+fn is_non_retryable_auth_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("close 4001")
+        || lower.contains("server rejected auth")
+        || contains_auth_status(&lower, "401", "unauthorized")
+        || contains_auth_status(&lower, "403", "forbidden")
+}
+
+fn contains_auth_status(message: &str, status: &str, status_text: &str) -> bool {
+    let status_patterns = [
+        format!("http {status}"),
+        format!("http status {status}"),
+        format!("status {status}"),
+        format!("status: {status}"),
+        format!("status={status}"),
+        format!("{status} {status_text}"),
+        format!("{status}: {status_text}"),
+        format!("{status} ({status_text})"),
+        format!("({status} {status_text})"),
+    ];
+
+    status_patterns
+        .iter()
+        .any(|pattern| message.contains(pattern))
 }
 
 fn default_api_base() -> String {

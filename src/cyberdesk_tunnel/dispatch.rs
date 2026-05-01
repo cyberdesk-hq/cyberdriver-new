@@ -13,15 +13,18 @@
 //   GET /computer/fs/read
 // M7 filesystem write:
 //   POST /computer/fs/write
+// M7 shell/internal basics:
+//   POST /computer/shell/powershell/{simple,test,exec,session}
+//   GET /internal/diagnostics
+//   POST /internal/{shutdown,keepalive/remote/*}
 // Future milestones add:
-//       POST /computer/shell/powershell/*     (tokio::process)
-//       /internal/{shutdown,diagnostics,update,keepalive/*}
+//       POST /internal/update
 //
 // Unknown paths return 501 + a small JSON error body so
 // the caller can clearly tell "your tunnel is alive, this endpoint is
 // just not implemented yet" from "the tunnel is broken."
 
-use super::{display, framing::RequestMeta, fs, input, path_without_query};
+use super::{display, framing::RequestMeta, fs, input, internal, path_without_query, shell};
 use serde_json::json;
 
 /// Request provenance marker for routes that must only be reachable through the
@@ -97,6 +100,51 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
         ("POST", "/computer/fs/write" | "computer/fs/write") => match fs::write(body) {
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(400, format!("fs write failed: {err:#}")),
+        },
+        ("POST", "/computer/shell/powershell/simple") => match shell::simple() {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(500, format!("powershell simple failed: {err:#}")),
+        },
+        ("POST", "/computer/shell/powershell/test") => match shell::test() {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(500, format!("powershell test failed: {err:#}")),
+        },
+        ("POST", "/computer/shell/powershell/exec") => match shell::exec(body) {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(400, format!("powershell exec failed: {err:#}")),
+        },
+        ("POST", "/computer/shell/powershell/session") => match shell::session(body) {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(400, format!("powershell session failed: {err:#}")),
+        },
+        ("GET", "/internal/diagnostics") => match internal::diagnostics() {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(500, format!("diagnostics failed: {err:#}")),
+        },
+        ("POST", "/internal/shutdown") => {
+            if !internal::shutdown_enabled() {
+                json_error(
+                    403,
+                    "internal shutdown is disabled on this agent".to_string(),
+                )
+            } else {
+                match internal::shutdown(body) {
+                    Ok(body) => (200, body, "application/json"),
+                    Err(err) => json_error(500, format!("shutdown failed: {err:#}")),
+                }
+            }
+        }
+        ("POST", "/internal/keepalive/remote/activity") => match internal::keepalive_activity() {
+            Ok(response) => response,
+            Err(err) => json_error(500, format!("keepalive activity failed: {err:#}")),
+        },
+        ("POST", "/internal/keepalive/remote/enable") => match internal::keepalive_enable() {
+            Ok(response) => response,
+            Err(err) => json_error(500, format!("keepalive enable failed: {err:#}")),
+        },
+        ("POST", "/internal/keepalive/remote/disable") => match internal::keepalive_disable() {
+            Ok(response) => response,
+            Err(err) => json_error(500, format!("keepalive disable failed: {err:#}")),
         },
         _ => (
             501,
