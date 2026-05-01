@@ -416,13 +416,20 @@ fn is_loopback_api_base(value: &str) -> bool {
 
 fn option_value(args: &[String], name: &str) -> Option<String> {
     args.windows(2)
-        .find(|pair| pair[0] == name && !pair[1].starts_with('-'))
+        .find(|pair| pair[0] == name && !is_known_option(&pair[1]))
         .map(|pair| pair[1].clone())
         .or_else(|| {
             let prefix = format!("{name}=");
             args.iter()
                 .find_map(|arg| arg.strip_prefix(&prefix).map(ToOwned::to_owned))
         })
+}
+
+fn is_known_option(value: &str) -> bool {
+    matches!(
+        value,
+        "--secret" | "--name" | "--api-base" | "--host" | "-h" | "--help"
+    )
 }
 
 fn has_flag(args: &[String], name: &str) -> bool {
@@ -474,6 +481,16 @@ mod tests {
         ];
         assert_eq!(option_value(&args, "--name"), None);
         assert_eq!(option_value(&args, "--secret"), Some("ak_test".to_string()));
+    }
+
+    #[test]
+    fn option_value_accepts_single_dash_values() {
+        let args = vec![
+            "join".to_string(),
+            "--secret".to_string(),
+            "-ak_test".to_string(),
+        ];
+        assert_eq!(option_value(&args, "--secret"), Some("-ak_test".to_string()));
     }
 
     #[test]

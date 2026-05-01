@@ -79,7 +79,6 @@ pub fn spawn_if_enabled() {
 
     let fingerprint =
         std::env::var("CYBERDESK_FINGERPRINT").unwrap_or_else(|_| persistent_fingerprint());
-    let machine_name = crate::cyberdesk_cli::machine_name_from_env();
 
     log::info!(
         "cyberdesk_tunnel: spawning tunnel client (api_base={}, fingerprint={})",
@@ -93,11 +92,12 @@ pub fn spawn_if_enabled() {
         let mut backoff = Duration::from_secs(1);
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
+            let machine_name = crate::cyberdesk_cli::machine_name_from_env();
             let result = client::run(
                 api_key.clone(),
                 api_base.clone(),
                 fingerprint.clone(),
-                machine_name.clone(),
+                machine_name,
                 dispatch_semaphore.clone(),
             )
             .await;
