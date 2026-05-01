@@ -716,16 +716,14 @@ UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
         WcaLog(LOGMSG_STANDARD, "Failed to create service: \"%ls\"", svcName);
     }
 
-    if (serviceCreated && !shouldStartService) {
-        goto LExit;
-    }
-
-    if (IsServiceRunningW(svcName)) {
-        WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is running.", svcName);
-    }
-    else {
-        WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is not running, try create and start service by shell", svcName);
-        TryCreateStartServiceByShell(svcName, svcBinary, szSvcDisplayName, shouldStartService);
+    if (!serviceCreated || shouldStartService) {
+        if (IsServiceRunningW(svcName)) {
+            WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is running.", svcName);
+        }
+        else {
+            WcaLog(LOGMSG_STANDARD, "Service \"%ls\" is not running, try create and start service by shell", svcName);
+            TryCreateStartServiceByShell(svcName, svcBinary, szSvcDisplayName, shouldStartService);
+        }
     }
 
 LExit:
