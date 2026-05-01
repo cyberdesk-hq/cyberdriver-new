@@ -124,8 +124,17 @@ fn parse_join(args: &[String]) -> EarlyCommand {
         return EarlyCommand::Handled(2);
     };
 
-    let api_base = option_value(args, "--api-base")
-        .or_else(|| option_value(args, "--host").map(|host| api_base_from_host(&host)));
+    let api_base = match option_value(args, "--api-base").or_else(|| option_value(args, "--host"))
+    {
+        Some(value) => match validate_api_base(&value) {
+            Ok(value) => Some(value),
+            Err(message) => {
+                eprintln!("{message}");
+                return EarlyCommand::Handled(2);
+            }
+        },
+        None => None,
+    };
 
     EarlyCommand::Join(JoinCommand { secret, api_base })
 }
@@ -335,6 +344,48 @@ fn api_base_from_host(host: &str) -> String {
     }
 }
 
+fn validate_api_base(raw: &str) -> Result<String, String> {
+    let value = raw.trim();
+    if value.starts_with("wss://") {
+        return Ok(value.to_string());
+    }
+    if let Some(rest) = value.strip_prefix("https://") {
+        return Ok(format!("wss://{rest}"));
+    }
+
+    if value.starts_with("ws://") || value.starts_with("http://") {
+        if is_loopback_api_base(value) {
+            if let Some(rest) = value.strip_prefix("http://") {
+                return Ok(format!("ws://{rest}"));
+            }
+            return Ok(value.to_string());
+        }
+        return Err(
+            "error: insecure --api-base is only allowed for localhost/loopback dev targets"
+                .to_string(),
+        );
+    }
+
+    Ok(api_base_from_host(value))
+}
+
+fn is_loopback_api_base(value: &str) -> bool {
+    let Some(rest) = value
+        .strip_prefix("ws://")
+        .or_else(|| value.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let host_port_path = rest.split('/').next().unwrap_or("");
+    let host = host_port_path
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(host_port_path)
+        .trim_matches(['[', ']']);
+    let host = host.rsplit_once(':').map(|(host, _)| host).unwrap_or(host);
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
 fn option_value(args: &[String], name: &str) -> Option<String> {
     args.windows(2)
         .find(|pair| pair[0] == name && !pair[1].starts_with('-'))
@@ -352,7 +403,7 @@ fn has_flag(args: &[String], name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{option_value, sanitize_machine_name, NAME_MAX_LEN};
+    use super::{option_value, sanitize_machine_name, validate_api_base, NAME_MAX_LEN};
 
     #[test]
     fn sanitize_machine_name_accepts_trimmed_printable_ascii() {
@@ -387,5 +438,31 @@ mod tests {
         ];
         assert_eq!(option_value(&args, "--name"), None);
         assert_eq!(option_value(&args, "--secret"), Some("ak_test".to_string()));
+    }
+
+    #[test]
+    fn validate_api_base_rejects_insecure_non_loopback() {
+        assert!(validate_api_base("ws://api.cyberdesk.io").is_err());
+        assert!(validate_api_base("http://10.0.0.10:8080").is_err());
+    }
+
+    #[test]
+    fn validate_api_base_allows_secure_and_local_dev_targets() {
+        assert_eq!(
+            validate_api_base("api.cyberdesk.io"),
+            Ok("wss://api.cyberdesk.io".to_string())
+        );
+        assert_eq!(
+            validate_api_base("https://api.cyberdesk.io"),
+            Ok("wss://api.cyberdesk.io".to_string())
+        );
+        assert_eq!(
+            validate_api_base("ws://localhost:8080"),
+            Ok("ws://localhost:8080".to_string())
+        );
+        assert_eq!(
+            validate_api_base("http://127.0.0.1:8080"),
+            Ok("ws://127.0.0.1:8080".to_string())
+        );
     }
 }
