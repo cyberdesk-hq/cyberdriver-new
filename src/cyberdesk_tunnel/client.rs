@@ -23,6 +23,7 @@ use futures_util::{SinkExt, StreamExt};
 use hbb_common::anyhow::{anyhow, bail, Context, Result};
 use hbb_common::{log, tokio};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use tokio_tungstenite::{
     connect_async,
@@ -110,7 +111,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     let method = meta.method.clone();
                     let log_path = log_path(&meta.path);
                     let request_id = meta.request_id.clone();
-                    let idempotency_key = idempotency_key(&meta);
+                    let idempotency_key = idempotency_cache_key(&meta, &body);
                     let (status, response_body, content_type) = match pending_error.take() {
                         Some(response) => response,
                         None => {
@@ -309,12 +310,25 @@ impl IdempotencyCache {
     }
 }
 
-fn idempotency_key(meta: &RequestMeta) -> Option<String> {
-    header_value(&meta.headers, "x-idempotency-key")
+fn idempotency_cache_key(meta: &RequestMeta, body: &[u8]) -> Option<String> {
+    let raw_key = header_value(&meta.headers, "x-idempotency-key")
         .or_else(|| header_value(&meta.headers, "idempotency-key"))
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
+        .map(ToOwned::to_owned)?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(meta.method.as_bytes());
+    hasher.update([0]);
+    hasher.update(meta.path.as_bytes());
+    hasher.update([0]);
+    let query = serde_json::to_vec(&meta.query).unwrap_or_default();
+    hasher.update(query);
+    hasher.update([0]);
+    hasher.update(body);
+    let request_hash = hex::encode(hasher.finalize());
+
+    Some(format!("{raw_key}:{request_hash}"))
 }
 
 fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {

@@ -164,12 +164,31 @@ fn run_command(
             });
         }
         if start.elapsed() >= timeout {
-            return Ok(PowerShellExecResponse {
-                stdout: String::new(),
-                stderr: format!(
-                    "Command timeout reached after {:.1} seconds. Process continues in background.",
-                    timeout.as_secs_f64()
+            let _ = child.kill();
+            let (stdout, stderr) = match child.wait_with_output() {
+                Ok(output) => (
+                    truncate_output(String::from_utf8_lossy(&output.stdout).trim().to_string()),
+                    truncate_output(String::from_utf8_lossy(&output.stderr).trim().to_string()),
                 ),
+                Err(err) => (
+                    String::new(),
+                    format!("failed to collect timed-out process output: {err}"),
+                ),
+            };
+            let stderr = if stderr.is_empty() {
+                format!(
+                    "Command timeout reached after {:.1} seconds. Process was terminated.",
+                    timeout.as_secs_f64()
+                )
+            } else {
+                format!(
+                    "{stderr}\nCommand timeout reached after {:.1} seconds. Process was terminated.",
+                    timeout.as_secs_f64()
+                )
+            };
+            return Ok(PowerShellExecResponse {
+                stdout,
+                stderr,
                 exit_code: 124,
                 session_id: session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 timeout_reached: Some(true),
