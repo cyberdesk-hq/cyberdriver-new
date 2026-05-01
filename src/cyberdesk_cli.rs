@@ -7,6 +7,7 @@
 // X11/Wayland display is available.
 
 use serde_json::json;
+use std::io::Read as _;
 
 const NAME_ENV: &str = "CYBERDRIVER_MACHINE_NAME";
 const NAME_MAX_LEN: usize = 128;
@@ -162,6 +163,16 @@ fn parse_join(args: &[String]) -> EarlyCommand {
 }
 
 fn parse_msi_configure(args: &[String]) -> EarlyCommand {
+    if has_flag(args, "--stdin") {
+        return match read_msi_config_from_stdin() {
+            Ok(configure) => EarlyCommand::MsiConfigure(configure),
+            Err(message) => {
+                eprintln!("{message}");
+                EarlyCommand::Handled(2)
+            }
+        };
+    }
+
     let api_key = option_value(args, "--api-key").filter(|value| !value.trim().is_empty());
     let api_base = match option_value(args, "--api-base") {
         Some(value) if value.trim().is_empty() => None,
@@ -180,6 +191,30 @@ fn parse_msi_configure(args: &[String]) -> EarlyCommand {
         api_key,
         api_base,
         reset_fingerprint,
+    })
+}
+
+fn read_msi_config_from_stdin() -> Result<MsiConfigureCommand, String> {
+    let mut raw = String::new();
+    std::io::stdin()
+        .read_to_string(&mut raw)
+        .map_err(|err| format!("failed to read MSI configuration from stdin: {err}"))?;
+
+    let mut lines = raw.lines();
+    let api_key = lines
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let api_base = match lines.next().map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => Some(validate_api_base(value)?),
+        None => None,
+    };
+
+    Ok(MsiConfigureCommand {
+        api_key,
+        api_base,
+        reset_fingerprint: false,
     })
 }
 
@@ -536,6 +571,12 @@ mod tests {
         ];
         assert_eq!(option_value(&args, "--name"), None);
         assert_eq!(option_value(&args, "--secret"), Some("ak_test".to_string()));
+    }
+
+    #[test]
+    fn validate_api_base_omits_empty_msi_stdin_values() {
+        assert!(validate_api_base("").is_err());
+        assert!(validate_api_base("   ").is_err());
     }
 
     #[test]

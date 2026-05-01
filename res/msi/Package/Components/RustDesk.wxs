@@ -16,6 +16,7 @@
 		<CustomAction Id="AddFirewallRules.SetParam" Return="check" Property="AddFirewallRules" Value="1[INSTALLFOLDER_INNER]$(var.Product).exe" />
 		<CustomAction Id="RemoveFirewallRules.SetParam" Return="check" Property="RemoveFirewallRules" Value="0[INSTALLFOLDER_INNER]$(var.Product).exe" />
 		<CustomAction Id="CreateStartService.SetParam" Return="check" Property="CreateStartService" Value="$(var.Product);&quot;[INSTALLFOLDER_INNER]$(var.Product).exe&quot; --service;[REGISTER_NOW]" />
+		<CustomAction Id="ConfigureCyberdesk.SetParam" Return="check" Property="ConfigureCyberdesk" Value="[INSTALLFOLDER_INNER]$(var.Product).exe;[APIKEY];[CYBERDESK_API_BASE]" />
 		<CustomAction Id="TryStopDeleteService.SetParam" Return="check" Property="TryStopDeleteService" Value="$(var.Product)" />
 
 		<CustomAction Id="LaunchApp" ExeCommand="" Return="asyncNoWait" FileRef="App.exe" />
@@ -43,6 +44,7 @@
 			<Custom Action="SetPropertyServiceStop.SetParam.PropertyName" Before="SetPropertyServiceStop" Condition="NOT Installed" />
 
 			<Custom Action="ConfigureCyberdesk" After="InstallFiles" Condition="(APIKEY OR CYBERDESK_API_BASE) AND (NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE))" />
+			<Custom Action="ConfigureCyberdesk.SetParam" Before="ConfigureCyberdesk" Condition="(APIKEY OR CYBERDESK_API_BASE) AND (NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE))" />
 
 			<!-- Do not call CreateStartService if is uninstalling. -->
 			<!-- (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE) means uninstalling. -->

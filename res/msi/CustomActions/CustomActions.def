@@ -8,6 +8,7 @@ EXPORTS
     SetPropertyIsServiceRunning
     TryStopDeleteService
     CreateStartService
+    ConfigureCyberdesk
     TryDeleteStartupShortcut
     SetPropertyFromConfig
     AddRegSoftwareSASGeneration

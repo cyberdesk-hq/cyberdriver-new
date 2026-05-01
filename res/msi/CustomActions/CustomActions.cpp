@@ -7,10 +7,30 @@
 #include <winternl.h>
 #include <netfw.h>
 #include <shlwapi.h>
+#include <string>
 
 #include "./Common.h"
 
 #pragma comment(lib, "Shlwapi.lib")
+
+BOOL AppendWideLineAsUtf8(LPCWSTR value, std::string& out)
+{
+    if (value == NULL) {
+        value = L"";
+    }
+    int len = WideCharToMultiByte(CP_UTF8, 0, value, -1, NULL, 0, NULL, NULL);
+    if (len <= 0) {
+        return FALSE;
+    }
+    std::string tmp;
+    tmp.resize(len);
+    if (WideCharToMultiByte(CP_UTF8, 0, value, -1, &tmp[0], len, NULL, NULL) <= 0) {
+        return FALSE;
+    }
+    out.append(tmp.c_str());
+    out.push_back('\n');
+    return TRUE;
+}
 
 UINT __stdcall CustomActionHello(
     __in MSIHANDLE hInstall)
@@ -509,6 +529,111 @@ LExit:
 }
 
 void TryCreateStartServiceByShell(LPWSTR svcName, LPWSTR svcBinary, LPWSTR szSvcDisplayName, BOOL shouldStartService);
+UINT __stdcall ConfigureCyberdesk(__in MSIHANDLE hInstall)
+{
+    HRESULT hr = S_OK;
+    DWORD er = ERROR_SUCCESS;
+
+    LPWSTR pwz = NULL;
+    LPWSTR pwzData = NULL;
+    LPWSTR exePath = NULL;
+    LPWSTR apiKey = NULL;
+    LPWSTR apiBase = NULL;
+    HANDLE stdinRead = NULL;
+    HANDLE stdinWrite = NULL;
+    PROCESS_INFORMATION pi = { 0 };
+    STARTUPINFOW si = { 0 };
+    SECURITY_ATTRIBUTES sa = { 0 };
+    wchar_t cmd[1200] = { 0 };
+    DWORD written = 0;
+    DWORD exitCode = 0;
+    std::string stdinPayload;
+
+    hr = WcaInitialize(hInstall, "ConfigureCyberdesk");
+    ExitOnFailure(hr, "Failed to initialize");
+
+    hr = WcaGetProperty(L"CustomActionData", &pwzData);
+    ExitOnFailure(hr, "failed to get CustomActionData");
+
+    pwz = pwzData;
+    hr = WcaReadStringFromCaData(&pwz, &exePath);
+    ExitOnFailure(hr, "failed to read executable path from custom action data");
+    hr = WcaReadStringFromCaData(&pwz, &apiKey);
+    ExitOnFailure(hr, "failed to read API key from custom action data");
+    hr = WcaReadStringFromCaData(&pwz, &apiBase);
+    ExitOnFailure(hr, "failed to read API base from custom action data");
+
+    WcaLog(LOGMSG_STANDARD, "Configuring Cyberdesk headless options with %ls", exePath);
+
+    if (!AppendWideLineAsUtf8(apiKey, stdinPayload) || !AppendWideLineAsUtf8(apiBase, stdinPayload)) {
+        WcaLog(LOGMSG_STANDARD, "Failed to encode Cyberdesk MSI configuration.");
+        hr = E_FAIL;
+        goto LExit;
+    }
+
+    sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+    if (!CreatePipe(&stdinRead, &stdinWrite, &sa, 0)) {
+        WcaLog(LOGMSG_STANDARD, "Failed to create stdin pipe for Cyberdesk config: 0x%02X.", GetLastError());
+        hr = E_FAIL;
+        goto LExit;
+    }
+    SetHandleInformation(stdinWrite, HANDLE_FLAG_INHERIT, 0);
+
+    hr = StringCchPrintfW(cmd, sizeof(cmd) / sizeof(cmd[0]), L"\"%ls\" __cyberdesk-msi-configure --stdin", exePath);
+    ExitOnFailure(hr, "Failed to build Cyberdesk configure command");
+
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = stdinRead;
+    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+
+    if (!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        WcaLog(LOGMSG_STANDARD, "Failed to start Cyberdesk configure command: 0x%02X.", GetLastError());
+        hr = E_FAIL;
+        goto LExit;
+    }
+
+    CloseHandle(stdinRead);
+    stdinRead = NULL;
+    if (!stdinPayload.empty()) {
+        if (!WriteFile(stdinWrite, stdinPayload.data(), (DWORD)stdinPayload.size(), &written, NULL)) {
+            WcaLog(LOGMSG_STANDARD, "Failed to write Cyberdesk MSI config stdin: 0x%02X.", GetLastError());
+            hr = E_FAIL;
+        }
+    }
+    CloseHandle(stdinWrite);
+    stdinWrite = NULL;
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    if (GetExitCodeProcess(pi.hProcess, &exitCode) && exitCode != 0) {
+        WcaLog(LOGMSG_STANDARD, "Cyberdesk configure command exited with code: %u.", exitCode);
+        hr = E_FAIL;
+    }
+
+LExit:
+    if (stdinRead) {
+        CloseHandle(stdinRead);
+    }
+    if (stdinWrite) {
+        CloseHandle(stdinWrite);
+    }
+    if (pi.hThread) {
+        CloseHandle(pi.hThread);
+    }
+    if (pi.hProcess) {
+        CloseHandle(pi.hProcess);
+    }
+    if (pwzData) {
+        ReleaseStr(pwzData);
+    }
+
+    er = SUCCEEDED(hr) ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
+    return WcaFinalize(er);
+}
+
 UINT __stdcall CreateStartService(__in MSIHANDLE hInstall)
 {
     HRESULT hr = S_OK;
