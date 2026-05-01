@@ -48,8 +48,17 @@ const MAX_IN_FLIGHT_DISPATCHES: usize = 4;
 const MAX_IDEMPOTENCY_ENTRIES: usize = 128;
 const MAX_IDEMPOTENCY_BODY_BYTES: usize = 2 * 1024 * 1024;
 
+pub(super) fn dispatch_semaphore() -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(MAX_IN_FLIGHT_DISPATCHES))
+}
+
 /// Open the tunnel and run the request loop until the WS closes.
-pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Result<()> {
+pub async fn run(
+    api_key: String,
+    api_base: String,
+    fingerprint: String,
+    dispatch_semaphore: Arc<Semaphore>,
+) -> Result<()> {
     let url = format!("{}/tunnel/ws", api_base);
     log::info!(
         "cyberdesk_tunnel: connecting to {} as fingerprint {}",
@@ -96,7 +105,6 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
     let mut pending_error: Option<(u16, Vec<u8>, &'static str)> = None;
     let mut idempotency_cache = IdempotencyCache::default();
     let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-    let dispatch_semaphore = Arc::new(Semaphore::new(MAX_IN_FLIGHT_DISPATCHES));
 
     loop {
         let msg = tokio::select! {
@@ -135,13 +143,13 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                     let log_path = log_path(&meta.path);
                     let request_id = meta.request_id.clone();
                     let idempotency_key = idempotency_cache_key(&meta, &body);
-                    let response = match pending_error.take() {
-                        Some(response) => response,
+                    let (response, response_idempotency_key) = match pending_error.take() {
+                        Some(response) => (response, None),
                         None => match idempotency_key
                             .as_deref()
                             .and_then(|key| idempotency_cache.get(key))
                         {
-                            Some(response) => response,
+                            Some(response) => (response, idempotency_key),
                             None => {
                                 let dispatch_idempotency_key =
                                     idempotency_key.as_deref().map(ToOwned::to_owned);
@@ -156,7 +164,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                                         );
                                         continue;
                                     }
-                                    Err(_) => too_many_in_flight_response(),
+                                    Err(_) => (too_many_in_flight_response(), None),
                                 }
                             }
                         },
@@ -168,7 +176,7 @@ pub async fn run(api_key: String, api_base: String, fingerprint: String) -> Resu
                             method,
                             log_path,
                             request_id,
-                            idempotency_key: None,
+                            idempotency_key: response_idempotency_key,
                             response,
                         },
                     )

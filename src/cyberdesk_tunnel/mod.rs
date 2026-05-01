@@ -84,8 +84,15 @@ pub fn spawn_if_enabled() {
     // re-export. We deliberately do NOT create a new runtime here.
     hbb_common::tokio::spawn(async move {
         let mut backoff = Duration::from_secs(1);
+        let dispatch_semaphore = client::dispatch_semaphore();
         loop {
-            let result = client::run(api_key.clone(), api_base.clone(), fingerprint.clone()).await;
+            let result = client::run(
+                api_key.clone(),
+                api_base.clone(),
+                fingerprint.clone(),
+                dispatch_semaphore.clone(),
+            )
+            .await;
             let should_increase_backoff = match result {
                 Ok(()) => {
                     log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
