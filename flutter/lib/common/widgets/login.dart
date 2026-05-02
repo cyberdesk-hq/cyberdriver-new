@@ -451,6 +451,12 @@ Future<bool?> loginDialog() async {
   });
 
   final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
+    bool hasCyberdeskLoginEnabled() {
+      return loginOptions.any((option) {
+        return option is Map && option['name'] == 'clerk';
+      });
+    }
+
     username.addListener(() {
       if (usernameMsg != null) {
         setState(() => usernameMsg = null);
@@ -552,9 +558,7 @@ Future<bool?> loginDialog() async {
     }
 
     thirdAuthWidget() => Obx(() {
-          final hasCyberdeskLogin = loginOptions.any((option) {
-            return option is Map && option['name'] == 'clerk';
-          });
+          final hasCyberdeskLogin = hasCyberdeskLoginEnabled();
           return Offstage(
             offstage: loginOptions.isEmpty,
             child: Column(
@@ -643,28 +647,29 @@ Future<bool?> loginDialog() async {
             height: 8.0,
           ),
           Obx(() {
-            final hasCyberdeskLogin = loginOptions.any((option) {
-              return option is Map && option['name'] == 'clerk';
-            });
-            return Offstage(
-              offstage: hasCyberdeskLogin,
-              child: LoginWidgetUserPass(
-                username: username,
-                pass: password,
-                usernameMsg: usernameMsg,
-                passMsg: passwordMsg,
-                isInProgress: isInProgress,
-                curOP: curOP,
-                onLogin: onLogin,
-                userFocusNode: userFocusNode,
-              ),
+            if (hasCyberdeskLoginEnabled()) {
+              return const SizedBox.shrink();
+            }
+            return LoginWidgetUserPass(
+              username: username,
+              pass: password,
+              usernameMsg: usernameMsg,
+              passMsg: passwordMsg,
+              isInProgress: isInProgress,
+              curOP: curOP,
+              onLogin: onLogin,
+              userFocusNode: userFocusNode,
             );
           }),
           thirdAuthWidget(),
         ],
       ),
       onCancel: onDialogCancel,
-      onSubmit: onLogin,
+      onSubmit: () {
+        if (!hasCyberdeskLoginEnabled()) {
+          onLogin();
+        }
+      },
     );
   });
 

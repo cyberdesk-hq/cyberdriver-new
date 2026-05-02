@@ -281,7 +281,7 @@ pub async fn run(
                     if let Err(err) = write.send(Message::Close(frame.clone())).await {
                         log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
                     }
-                    if code == 4001 || code == 403 {
+                    if code == 4001 {
                         bail!(
                             "cyberdesk_tunnel: server rejected auth (close {code}); refusing to retry"
                         );
