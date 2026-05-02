@@ -132,9 +132,18 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
                 }
             }
         }
-        ("POST", "/internal/update") => match internal::update(body) {
-            Ok(body) => (200, body, "application/json"),
-            Err(err) => json_error(500, format!("update failed: {err:#}")),
+        ("POST", "/internal/update") => {
+            if !internal::update_enabled() {
+                json_error(
+                    403,
+                    "internal update is disabled on this agent".to_string(),
+                )
+            } else {
+                match internal::update(body) {
+                    Ok(body) => (200, body, "application/json"),
+                    Err(err) => json_error(500, format!("update failed: {err:#}")),
+                }
+            }
         },
         ("POST", "/internal/keepalive/remote/activity") => match internal::keepalive_activity() {
             Ok(response) => response,
