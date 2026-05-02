@@ -186,14 +186,13 @@ impl OidcSession {
     ) -> ResultType<HbbHttpResponse<AuthBody>> {
         let url = Url::parse_with_params(
             &format!("{}/api/oidc/auth-query", api_server),
-            &[
-                ("code", code),
-                ("id", id),
-                ("uuid", uuid),
-                ("clientSecret", client_secret),
-            ],
+            &[("code", code), ("id", id), ("uuid", uuid)],
         )?;
         Self::ensure_client(api_server);
+        let header = serde_json::json!({
+            "X-Cyberdriver-OIDC-Client-Secret": client_secret,
+        })
+        .to_string();
         #[derive(Deserialize)]
         struct HttpResponseBody {
             body: String,
@@ -203,7 +202,7 @@ impl OidcSession {
             url.to_string(),
             "GET".to_owned(),
             None,
-            "{}".to_owned(),
+            header,
         )?;
         let resp = serde_json::from_str::<HttpResponseBody>(&resp)?;
         HbbHttpResponse::parse(&resp.body)
