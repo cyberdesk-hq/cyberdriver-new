@@ -1157,6 +1157,7 @@ pub fn main_set_local_option(key: String, value: String) {
     if key == "cyberdesk_api_key" && !value.trim().is_empty() {
         if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(value.clone()) {
             log::error!("{message}");
+            set_local_option(key, value.clone());
         }
     } else {
         set_local_option(key, value.clone());

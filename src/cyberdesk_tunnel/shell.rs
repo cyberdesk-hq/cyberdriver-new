@@ -502,13 +502,19 @@ fn take_marked_stdout(stdout: &str, marker: &str) -> Option<(String, i32)> {
     let marker_pos = stdout.find(marker)?;
     let before = stdout[..marker_pos].trim_end().to_string();
     let after = &stdout[marker_pos + marker.len()..];
-    let exit_text = after
-        .trim_start()
+    let after = after.trim_start();
+    let exit_len = after
         .chars()
         .take_while(|ch| ch.is_ascii_digit() || *ch == '-')
-        .collect::<String>();
-    let exit_code = exit_text.parse::<i32>().unwrap_or(0);
-    Some((before, exit_code))
+        .map(char::len_utf8)
+        .sum();
+    if exit_len == 0 {
+        return None;
+    }
+    after[..exit_len]
+        .parse::<i32>()
+        .ok()
+        .map(|exit_code| (before, exit_code))
 }
 
 fn run_command(
