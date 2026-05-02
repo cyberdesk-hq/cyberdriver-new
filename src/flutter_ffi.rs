@@ -1154,10 +1154,14 @@ pub fn main_set_local_option(key: String, value: String) {
     let is_texture_render_key = key.eq(config::keys::OPTION_TEXTURE_RENDER);
     let is_d3d_render_key = key.eq(config::keys::OPTION_ALLOW_D3D_RENDER);
     #[cfg(feature = "cyberdesk")]
-    if key == "cyberdesk_api_key" && !value.trim().is_empty() {
-        if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(value.clone()) {
-            log::error!("{message}");
-            set_local_option(key, value.clone());
+    if key == "cyberdesk_api_key" {
+        if value.trim().is_empty() {
+            set_local_option(key, String::new());
+        } else if let Err(message) =
+            crate::cyberdesk_tunnel::store_configured_api_key(value.clone())
+        {
+            log::error!("refusing to store Cyberdesk API key without encryption: {message}");
+            return;
         }
     } else {
         set_local_option(key, value.clone());
