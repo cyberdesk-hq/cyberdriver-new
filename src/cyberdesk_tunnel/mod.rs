@@ -120,7 +120,9 @@ pub fn spawn_if_enabled() {
                         break;
                     }
                     retry_after = retry_after_from_message(&message);
-                    if backoff >= Duration::from_secs(16) {
+                    if retry_after.is_some() {
+                        max_backoff_failures = 0;
+                    } else if backoff >= Duration::from_secs(16) {
                         max_backoff_failures = max_backoff_failures.saturating_add(1);
                         if max_backoff_failures >= 3 {
                             log::error!(
@@ -136,7 +138,9 @@ pub fn spawn_if_enabled() {
 
             let sleep_for = retry_after.unwrap_or_else(|| jittered_backoff(backoff));
             hbb_common::tokio::time::sleep(sleep_for).await;
-            backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
+            if retry_after.is_none() {
+                backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
+            }
         }
     });
 }
