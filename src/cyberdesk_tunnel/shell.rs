@@ -108,9 +108,7 @@ pub fn exec(body: &[u8]) -> Result<Vec<u8>> {
         .timeout
         .unwrap_or(30.0)
         .clamp(0.1, MAX_TIMEOUT_SECONDS);
-    let session_id = request
-        .session_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let session_id = session_id_or_new(request.session_id)?;
     let result = if request.same_session {
         run_session_command(
             &request.command,
@@ -147,21 +145,14 @@ pub fn session(body: &[u8]) -> Result<Vec<u8>> {
             }))?)
         }
         "destroy" => {
-            let session_id = request
-                .session_id
-                .context("missing required 'session_id' for destroy")?;
+            let session_id = require_session_id(request.session_id)?;
             let removed = destroy_session(&session_id);
             Ok(serde_json::to_vec(&json!({
                 "message": if removed { "Session destroyed" } else { "Session not found" },
                 "session_id": session_id
             }))?)
         }
-        "list" => {
-            let guard = lock_sessions();
-            let sessions = guard.keys().cloned().collect::<Vec<_>>();
-            Ok(serde_json::to_vec(&json!({ "sessions": sessions }))?)
-        }
-        _ => bail!("invalid action. Must be 'create', 'destroy', or 'list'"),
+        _ => bail!("invalid action. Must be 'create' or 'destroy'"),
     }
 }
 
@@ -239,7 +230,7 @@ fn run_session_command(
 }
 
 fn create_session(requested_session_id: Option<String>) -> Result<String> {
-    let session_id = requested_session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let session_id = session_id_or_new(requested_session_id)?;
     let mut guard = lock_sessions();
     if guard.contains_key(&session_id) {
         return Ok(session_id);
@@ -249,6 +240,27 @@ fn create_session(requested_session_id: Option<String>) -> Result<String> {
     }
     guard.insert(session_id.clone(), Arc::new(Mutex::new(spawn_session()?)));
     Ok(session_id)
+}
+
+fn session_id_or_new(session_id: Option<String>) -> Result<String> {
+    match session_id {
+        Some(value) => normalize_session_id(&value),
+        None => Ok(uuid::Uuid::new_v4().to_string()),
+    }
+}
+
+fn require_session_id(session_id: Option<String>) -> Result<String> {
+    let value = session_id.context("missing required 'session_id'")?;
+    normalize_session_id(&value)
+}
+
+fn normalize_session_id(session_id: &str) -> Result<String> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        bail!("session_id must not be empty");
+    }
+    let parsed = uuid::Uuid::parse_str(session_id).context("session_id must be a UUID")?;
+    Ok(parsed.to_string())
 }
 
 fn destroy_session(session_id: &str) -> bool {
