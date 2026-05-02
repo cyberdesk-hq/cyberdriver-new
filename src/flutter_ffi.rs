@@ -1153,6 +1153,15 @@ pub fn main_set_env(key: String, value: Option<String>) -> SyncReturn<()> {
 pub fn main_set_local_option(key: String, value: String) {
     let is_texture_render_key = key.eq(config::keys::OPTION_TEXTURE_RENDER);
     let is_d3d_render_key = key.eq(config::keys::OPTION_ALLOW_D3D_RENDER);
+    #[cfg(feature = "cyberdesk")]
+    if key == "cyberdesk_api_key" && !value.trim().is_empty() {
+        if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(value.clone()) {
+            log::error!("{message}");
+        }
+    } else {
+        set_local_option(key, value.clone());
+    }
+    #[cfg(not(feature = "cyberdesk"))]
     set_local_option(key, value.clone());
     if is_texture_render_key {
         let session_event = [("v", &value)];

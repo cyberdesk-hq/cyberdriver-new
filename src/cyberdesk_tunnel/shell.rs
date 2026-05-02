@@ -13,6 +13,7 @@ use serde_json::json;
 use std::os::unix::process::CommandExt;
 use std::{
     collections::HashMap,
+    fmt,
     io::{Read, Write},
     path::PathBuf,
     process::{Child, ChildStdin, Command, Stdio},
@@ -66,6 +67,34 @@ struct PowerShellSession {
     stdin: ChildStdin,
     stdout: Receiver<Vec<u8>>,
     stderr: Receiver<Vec<u8>>,
+}
+
+#[derive(Debug)]
+struct SessionCommandError {
+    message: String,
+    timed_out: bool,
+}
+
+impl SessionCommandError {
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            timed_out: false,
+        }
+    }
+
+    fn timed_out(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            timed_out: true,
+        }
+    }
+}
+
+impl fmt::Display for SessionCommandError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
 }
 
 static POWERSHELL_SESSIONS: OnceLock<Mutex<HashMap<String, Arc<Mutex<PowerShellSession>>>>> =
@@ -191,16 +220,16 @@ fn run_session_command(
         bail!("PowerShell session exited before command (status={status})");
     }
 
-    let command_result = (|| -> Result<(String, String, i32)> {
+    let command_result = (|| -> std::result::Result<(String, String, i32), SessionCommandError> {
         let mut session = lock_session(&session);
-        session
-            .stdin
-            .write_all(wrapped.as_bytes())
-            .context("failed to write command to PowerShell session")?;
-        session
-            .stdin
-            .flush()
-            .context("failed to flush PowerShell session stdin")?;
+        session.stdin.write_all(wrapped.as_bytes()).map_err(|err| {
+            SessionCommandError::failed(format!(
+                "failed to write command to PowerShell session: {err}"
+            ))
+        })?;
+        session.stdin.flush().map_err(|err| {
+            SessionCommandError::failed(format!("failed to flush PowerShell session stdin: {err}"))
+        })?;
         collect_session_command(&mut session, &marker, timeout)
     })();
 
@@ -215,15 +244,20 @@ fn run_session_command(
         }),
         Err(err) => {
             remove_and_terminate_session(&session_id, &session);
+            let exit_code = if err.timed_out { 124 } else { -1 };
+            let timeout_reached = Some(err.timed_out);
+            let error = if err.timed_out {
+                "PowerShell session command timed out; session was destroyed"
+            } else {
+                "PowerShell session command failed; session was destroyed"
+            };
             Ok(PowerShellExecResponse {
                 stdout: String::new(),
-                stderr: format!("{err:#}"),
-                exit_code: 124,
+                stderr: err.to_string(),
+                exit_code,
                 session_id,
-                timeout_reached: Some(true),
-                error: Some(
-                    "PowerShell session command timed out; session was destroyed".to_string(),
-                ),
+                timeout_reached,
+                error: Some(error.to_string()),
             })
         }
     }
@@ -325,7 +359,10 @@ fn spawn_session() -> Result<PowerShellSession> {
 
 fn wrap_session_command(command: &str, working_directory: Option<&str>, marker: &str) -> String {
     let mut wrapped = String::new();
-    if let Some(dir) = working_directory.map(str::trim).filter(|dir| !dir.is_empty()) {
+    if let Some(dir) = working_directory
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+    {
         wrapped.push_str("Set-Location -LiteralPath ");
         wrapped.push_str(&powershell_single_quote(dir));
         wrapped.push_str("\r\n");
@@ -347,7 +384,7 @@ fn collect_session_command(
     session: &mut PowerShellSession,
     marker: &str,
     timeout: Duration,
-) -> Result<(String, String, i32)> {
+) -> std::result::Result<(String, String, i32), SessionCommandError> {
     let start = Instant::now();
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -361,9 +398,9 @@ fn collect_session_command(
                 exit_code,
             ));
         }
-        let remaining = timeout
-            .checked_sub(start.elapsed())
-            .context("PowerShell session command timed out")?;
+        let remaining = timeout.checked_sub(start.elapsed()).ok_or_else(|| {
+            SessionCommandError::timed_out("PowerShell session command timed out")
+        })?;
         match session
             .stdout
             .recv_timeout(remaining.min(Duration::from_millis(100)))
@@ -371,18 +408,24 @@ fn collect_session_command(
             Ok(chunk) => stdout.push_str(&String::from_utf8_lossy(&chunk)),
             Err(RecvTimeoutError::Timeout) => {
                 if start.elapsed() >= timeout {
-                    bail!("PowerShell session command timed out");
+                    return Err(SessionCommandError::timed_out(
+                        "PowerShell session command timed out",
+                    ));
                 }
-                if let Some(status) = session
-                    .child
-                    .try_wait()
-                    .context("failed waiting for PowerShell session")?
-                {
-                    bail!("PowerShell session exited before command marker (status={status})");
+                if let Some(status) = session.child.try_wait().map_err(|err| {
+                    SessionCommandError::failed(format!(
+                        "failed waiting for PowerShell session: {err}"
+                    ))
+                })? {
+                    return Err(SessionCommandError::failed(format!(
+                        "PowerShell session exited before command marker (status={status})"
+                    )));
                 }
             }
             Err(RecvTimeoutError::Disconnected) => {
-                bail!("PowerShell session stdout closed before command marker");
+                return Err(SessionCommandError::failed(
+                    "PowerShell session stdout closed before command marker",
+                ));
             }
         }
     }
