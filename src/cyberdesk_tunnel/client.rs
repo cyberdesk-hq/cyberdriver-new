@@ -32,7 +32,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
+    fmt,
     sync::Arc,
+    time::Duration,
 };
 use tokio_tungstenite::{
     connect_async,
@@ -47,6 +49,33 @@ const MAX_REQUEST_BODY_BYTES: usize = 150 * 1024 * 1024;
 const MAX_IN_FLIGHT_DISPATCHES: usize = 4;
 const MAX_IDEMPOTENCY_ENTRIES: usize = 128;
 const MAX_IDEMPOTENCY_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Debug)]
+pub(super) struct RateLimited {
+    retry_after: Duration,
+}
+
+impl RateLimited {
+    fn new(retry_after: Duration) -> Self {
+        Self { retry_after }
+    }
+
+    pub(super) fn retry_after(&self) -> Duration {
+        self.retry_after
+    }
+}
+
+impl fmt::Display for RateLimited {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "cyberdesk_tunnel: server rate limited connection (close 4008; retry-after={})",
+            self.retry_after.as_secs()
+        )
+    }
+}
+
+impl std::error::Error for RateLimited {}
 
 pub(super) fn dispatch_semaphore() -> Arc<Semaphore> {
     Arc::new(Semaphore::new(MAX_IN_FLIGHT_DISPATCHES))
@@ -258,10 +287,9 @@ pub async fn run(
                         );
                     }
                     if code == 4008 {
-                        let retry_after = retry_after_from_reason(f.reason.as_ref()).unwrap_or(16);
-                        bail!(
-                            "cyberdesk_tunnel: server rate limited connection (close 4008; retry-after={retry_after})"
-                        );
+                        let retry_after = retry_after_from_reason(f.reason.as_ref())
+                            .unwrap_or_else(|| Duration::from_secs(16));
+                        return Err(RateLimited::new(retry_after).into());
                     }
                 } else {
                     log::info!("cyberdesk_tunnel: server closed connection (no close frame)");
@@ -461,7 +489,7 @@ fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {
         .and_then(|(_, value)| value.as_str())
 }
 
-fn retry_after_from_reason(reason: &str) -> Option<u64> {
+fn retry_after_from_reason(reason: &str) -> Option<Duration> {
     for token in reason.split(|ch: char| ch == ';' || ch == ',' || ch.is_whitespace()) {
         let Some(value) = token
             .strip_prefix("retry-after=")
@@ -470,7 +498,7 @@ fn retry_after_from_reason(reason: &str) -> Option<u64> {
             continue;
         };
         if let Ok(seconds) = value.parse::<u64>() {
-            return Some(seconds.clamp(1, 60));
+            return Some(Duration::from_secs(seconds.clamp(1, 60)));
         }
     }
     None

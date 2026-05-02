@@ -113,13 +113,15 @@ pub fn spawn_if_enabled() {
                     max_backoff_failures = 0;
                 }
                 Err(e) => {
+                    retry_after = e
+                        .downcast_ref::<client::RateLimited>()
+                        .map(|e| e.retry_after());
                     let message = format!("{e:?}");
                     log::error!("cyberdesk_tunnel: client exited with error: {message}");
                     if is_non_retryable_auth_error(&message) {
                         log::error!("cyberdesk_tunnel: auth rejected; tunnel will not reconnect");
                         break;
                     }
-                    retry_after = retry_after_from_message(&message);
                     if retry_after.is_some() {
                         max_backoff_failures = 0;
                     } else if backoff >= Duration::from_secs(16) {
@@ -169,18 +171,6 @@ fn contains_auth_status(message: &str, status: &str, status_text: &str) -> bool 
     status_patterns
         .iter()
         .any(|pattern| message.contains(pattern))
-}
-
-fn retry_after_from_message(message: &str) -> Option<Duration> {
-    let marker = "retry-after=";
-    let start = message.find(marker)? + marker.len();
-    let seconds = message[start..]
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit())
-        .collect::<String>()
-        .parse::<u64>()
-        .ok()?;
-    Some(Duration::from_secs(seconds.clamp(1, 60)))
 }
 
 fn jittered_backoff(base: Duration) -> Duration {

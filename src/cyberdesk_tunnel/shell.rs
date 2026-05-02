@@ -137,8 +137,9 @@ pub fn exec(body: &[u8]) -> Result<Vec<u8>> {
         .timeout
         .unwrap_or(30.0)
         .clamp(0.1, MAX_TIMEOUT_SECONDS);
+    let use_persistent_session = request.same_session && request.session_id.is_some();
     let session_id = session_id_or_new(request.session_id)?;
-    let result = if request.same_session {
+    let result = if use_persistent_session {
         run_session_command(
             &request.command,
             request.working_directory.as_deref(),
