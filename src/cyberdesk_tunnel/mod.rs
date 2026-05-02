@@ -109,6 +109,7 @@ pub fn spawn_if_enabled() {
             match &result {
                 Ok(()) => {
                     log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
+                    backoff = Duration::from_secs(1);
                     max_backoff_failures = 0;
                 }
                 Err(e) => {

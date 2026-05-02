@@ -68,7 +68,8 @@ struct PowerShellSession {
     stderr: Receiver<Vec<u8>>,
 }
 
-static POWERSHELL_SESSIONS: OnceLock<Mutex<HashMap<String, PowerShellSession>>> = OnceLock::new();
+static POWERSHELL_SESSIONS: OnceLock<Mutex<HashMap<String, Arc<Mutex<PowerShellSession>>>>> =
+    OnceLock::new();
 
 pub fn simple() -> Result<Vec<u8>> {
     let result = run_command("Write-Output 'Hello World'", None, Some(5.0), None)?;
@@ -170,32 +171,37 @@ fn run_session_command(
     timeout_seconds: f64,
     session_id: String,
 ) -> Result<PowerShellExecResponse> {
-    let mut guard = lock_sessions();
-    if !guard.contains_key(&session_id) {
-        if guard.len() >= MAX_SESSIONS {
-            bail!("too many active PowerShell sessions");
+    let session = {
+        let mut guard = lock_sessions();
+        if let Some(session) = guard.get(&session_id) {
+            session.clone()
+        } else {
+            if guard.len() >= MAX_SESSIONS {
+                bail!("too many active PowerShell sessions");
+            }
+            let session = Arc::new(Mutex::new(spawn_session()?));
+            guard.insert(session_id.clone(), session.clone());
+            session
         }
-        guard.insert(session_id.clone(), spawn_session()?);
-    }
+    };
 
     let marker = format!("__CYBERDRIVER_END_{}__", uuid::Uuid::new_v4().simple());
-    let session_status = guard
-        .get_mut(&session_id)
-        .context("failed to get PowerShell session")?
-        .child
-        .try_wait()
-        .context("failed checking PowerShell session")?;
+    let wrapped = wrap_session_command(command, working_directory, &marker);
+    let timeout = Duration::from_secs_f64(timeout_seconds.clamp(0.1, MAX_TIMEOUT_SECONDS));
+    let session_status = {
+        let mut session = lock_session(&session);
+        session
+            .child
+            .try_wait()
+            .context("failed checking PowerShell session")?
+    };
     if let Some(status) = session_status {
-        guard.remove(&session_id);
+        remove_and_terminate_session(&session_id, &session);
         bail!("PowerShell session exited before command (status={status})");
     }
 
-    let wrapped = wrap_session_command(command, working_directory, &marker);
-    let timeout = Duration::from_secs_f64(timeout_seconds.clamp(0.1, MAX_TIMEOUT_SECONDS));
-    let command_result = {
-        let session = guard
-            .get_mut(&session_id)
-            .context("failed to get PowerShell session")?;
+    let command_result = (|| -> Result<(String, String, i32)> {
+        let mut session = lock_session(&session);
         session
             .stdin
             .write_all(wrapped.as_bytes())
@@ -204,8 +210,8 @@ fn run_session_command(
             .stdin
             .flush()
             .context("failed to flush PowerShell session stdin")?;
-        collect_session_command(session, &marker, timeout)
-    };
+        collect_session_command(&mut session, &marker, timeout)
+    })();
 
     match command_result {
         Ok((stdout, stderr, exit_code)) => Ok(PowerShellExecResponse {
@@ -217,9 +223,7 @@ fn run_session_command(
             error: None,
         }),
         Err(err) => {
-            if let Some(mut session) = guard.remove(&session_id) {
-                terminate_process_tree(&mut session.child);
-            }
+            remove_and_terminate_session(&session_id, &session);
             Ok(PowerShellExecResponse {
                 stdout: String::new(),
                 stderr: format!("{err:#}"),
@@ -243,13 +247,17 @@ fn create_session(requested_session_id: Option<String>) -> Result<String> {
     if guard.len() >= MAX_SESSIONS {
         bail!("too many active PowerShell sessions");
     }
-    guard.insert(session_id.clone(), spawn_session()?);
+    guard.insert(session_id.clone(), Arc::new(Mutex::new(spawn_session()?)));
     Ok(session_id)
 }
 
 fn destroy_session(session_id: &str) -> bool {
-    let mut guard = lock_sessions();
-    if let Some(mut session) = guard.remove(session_id) {
+    let session = {
+        let mut guard = lock_sessions();
+        guard.remove(session_id)
+    };
+    if let Some(session) = session {
+        let mut session = lock_session(&session);
         terminate_process_tree(&mut session.child);
         true
     } else {
@@ -368,14 +376,35 @@ fn collect_session_command(
     }
 }
 
-fn sessions() -> &'static Mutex<HashMap<String, PowerShellSession>> {
+fn sessions() -> &'static Mutex<HashMap<String, Arc<Mutex<PowerShellSession>>>> {
     POWERSHELL_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn lock_sessions() -> MutexGuard<'static, HashMap<String, PowerShellSession>> {
+fn lock_sessions() -> MutexGuard<'static, HashMap<String, Arc<Mutex<PowerShellSession>>>> {
     match sessions().lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn lock_session(session: &Arc<Mutex<PowerShellSession>>) -> MutexGuard<'_, PowerShellSession> {
+    match session.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn remove_and_terminate_session(session_id: &str, session: &Arc<Mutex<PowerShellSession>>) {
+    let removed = {
+        let mut guard = lock_sessions();
+        match guard.get(session_id) {
+            Some(current) if Arc::ptr_eq(current, session) => guard.remove(session_id),
+            _ => None,
+        }
+    };
+    if let Some(session) = removed {
+        let mut session = lock_session(&session);
+        terminate_process_tree(&mut session.child);
     }
 }
 
@@ -406,7 +435,7 @@ fn drain_chunks(rx: &Receiver<Vec<u8>>, output: &mut String) {
     while let Ok(chunk) = rx.try_recv() {
         output.push_str(&String::from_utf8_lossy(&chunk));
         if output.len() > MAX_OUTPUT_CHARS * 2 {
-            output.truncate(MAX_OUTPUT_CHARS * 2);
+            truncate_at_char_boundary(output, MAX_OUTPUT_CHARS * 2);
             output.push_str("\n...<truncated>");
             break;
         }
@@ -663,14 +692,18 @@ fn resolve_working_directory(working_directory: Option<&str>) -> Result<PathBuf>
 
 fn truncate_output(mut output: String) -> String {
     if output.len() > MAX_OUTPUT_CHARS {
-        let mut truncate_at = MAX_OUTPUT_CHARS;
-        while !output.is_char_boundary(truncate_at) {
-            truncate_at -= 1;
-        }
-        output.truncate(truncate_at);
+        truncate_at_char_boundary(&mut output, MAX_OUTPUT_CHARS);
         output.push_str("\n...<truncated>");
     }
     output
+}
+
+fn truncate_at_char_boundary(output: &mut String, max_len: usize) {
+    let mut truncate_at = max_len;
+    while !output.is_char_boundary(truncate_at) {
+        truncate_at -= 1;
+    }
+    output.truncate(truncate_at);
 }
 
 fn default_true() -> bool {

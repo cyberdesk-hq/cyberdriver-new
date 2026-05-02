@@ -463,9 +463,12 @@ fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {
 
 fn retry_after_from_reason(reason: &str) -> Option<u64> {
     for token in reason.split(|ch: char| ch == ';' || ch == ',' || ch.is_whitespace()) {
-        let value = token
+        let Some(value) = token
             .strip_prefix("retry-after=")
-            .or_else(|| token.strip_prefix("Retry-After="))?;
+            .or_else(|| token.strip_prefix("Retry-After="))
+        else {
+            continue;
+        };
         if let Ok(seconds) = value.parse::<u64>() {
             return Some(seconds.clamp(1, 60));
         }

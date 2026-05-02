@@ -198,12 +198,7 @@ impl OidcSession {
             body: String,
         }
 
-        let resp = crate::http_request_sync(
-            url.to_string(),
-            "GET".to_owned(),
-            None,
-            header,
-        )?;
+        let resp = crate::http_request_sync(url.to_string(), "GET".to_owned(), None, header)?;
         let resp = serde_json::from_str::<HttpResponseBody>(&resp)?;
         HbbHttpResponse::parse(&resp.body)
     }
