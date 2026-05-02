@@ -249,13 +249,19 @@ pub async fn run(
                         code,
                         f.reason
                     );
-                    // 4001 = auth (no retry), 4008 = rate limit
-                    // (M7 will distinguish).
                     if let Err(err) = write.send(Message::Close(frame.clone())).await {
                         log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
                     }
-                    if code == 4001 {
-                        bail!("cyberdesk_tunnel: server rejected auth (close 4001); refusing to retry");
+                    if code == 4001 || code == 403 {
+                        bail!(
+                            "cyberdesk_tunnel: server rejected auth (close {code}); refusing to retry"
+                        );
+                    }
+                    if code == 4008 {
+                        let retry_after = retry_after_from_reason(f.reason.as_ref()).unwrap_or(16);
+                        bail!(
+                            "cyberdesk_tunnel: server rate limited connection (close 4008; retry-after={retry_after})"
+                        );
                     }
                 } else {
                     log::info!("cyberdesk_tunnel: server closed connection (no close frame)");
@@ -453,6 +459,18 @@ fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {
     map.iter()
         .find(|(key, _)| key.eq_ignore_ascii_case(name))
         .and_then(|(_, value)| value.as_str())
+}
+
+fn retry_after_from_reason(reason: &str) -> Option<u64> {
+    for token in reason.split(|ch: char| ch == ';' || ch == ',' || ch.is_whitespace()) {
+        let value = token
+            .strip_prefix("retry-after=")
+            .or_else(|| token.strip_prefix("Retry-After="))?;
+        if let Ok(seconds) = value.parse::<u64>() {
+            return Some(seconds.clamp(1, 60));
+        }
+    }
+    None
 }
 
 /// Best-effort local hostname for the X-Piglet-Hostname header. Used

@@ -20,7 +20,10 @@ use hbb_common::{
     password_security::{decrypt_str_or_original, encrypt_str_or_original},
 };
 use serde_derive::{Deserialize, Serialize};
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 mod client;
 mod dispatch;
@@ -90,6 +93,7 @@ pub fn spawn_if_enabled() {
     // re-export. We deliberately do NOT create a new runtime here.
     hbb_common::tokio::spawn(async move {
         let mut backoff = Duration::from_secs(1);
+        let mut max_backoff_failures = 0_u8;
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
             let machine_name = crate::cyberdesk_cli::machine_name_from_env();
@@ -101,9 +105,11 @@ pub fn spawn_if_enabled() {
                 dispatch_semaphore.clone(),
             )
             .await;
-            match result {
+            let mut retry_after = None;
+            match &result {
                 Ok(()) => {
                     log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
+                    max_backoff_failures = 0;
                 }
                 Err(e) => {
                     let message = format!("{e:?}");
@@ -112,10 +118,23 @@ pub fn spawn_if_enabled() {
                         log::error!("cyberdesk_tunnel: auth rejected; tunnel will not reconnect");
                         break;
                     }
+                    retry_after = retry_after_from_message(&message);
+                    if backoff >= Duration::from_secs(16) {
+                        max_backoff_failures = max_backoff_failures.saturating_add(1);
+                        if max_backoff_failures >= 3 {
+                            log::error!(
+                                "cyberdesk_tunnel: max reconnect backoff failed 3 times; exiting for service manager restart"
+                            );
+                            std::process::exit(75);
+                        }
+                    } else {
+                        max_backoff_failures = 0;
+                    }
                 }
             };
 
-            hbb_common::tokio::time::sleep(backoff).await;
+            let sleep_for = retry_after.unwrap_or_else(|| jittered_backoff(backoff));
+            hbb_common::tokio::time::sleep(sleep_for).await;
             backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
         }
     });
@@ -145,6 +164,34 @@ fn contains_auth_status(message: &str, status: &str, status_text: &str) -> bool 
     status_patterns
         .iter()
         .any(|pattern| message.contains(pattern))
+}
+
+fn retry_after_from_message(message: &str) -> Option<Duration> {
+    let marker = "retry-after=";
+    let start = message.find(marker)? + marker.len();
+    let seconds = message[start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>()
+        .parse::<u64>()
+        .ok()?;
+    Some(Duration::from_secs(seconds.clamp(1, 60)))
+}
+
+fn jittered_backoff(base: Duration) -> Duration {
+    let max_jitter_ms = (base.as_millis() * 30 / 100) as u64;
+    if max_jitter_ms == 0 {
+        return base;
+    }
+    base + Duration::from_millis(pseudo_random_jitter_ms(max_jitter_ms))
+}
+
+fn pseudo_random_jitter_ms(max_jitter_ms: u64) -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos() as u64)
+        .unwrap_or(0);
+    nanos % (max_jitter_ms + 1)
 }
 
 fn default_api_base() -> String {

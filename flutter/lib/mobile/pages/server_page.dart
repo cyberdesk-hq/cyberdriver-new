@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_hbb/cyberdesk_branding.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
 import 'package:flutter_hbb/mobile/widgets/dialog.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
@@ -262,7 +263,7 @@ class ServiceNotRunningNotification extends StatelessWidget {
                     serverModel.toggleService();
                   }
                 },
-                label: Text(translate("Start service")))
+                label: Text(translate(CyberdeskBranding.enableServiceLabel)))
           ],
         ));
   }

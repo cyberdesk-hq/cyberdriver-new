@@ -162,12 +162,14 @@ impl OidcSession {
         op: &str,
         id: &str,
         uuid: &str,
+        client_secret: &str,
     ) -> ResultType<HbbHttpResponse<OidcAuthUrl>> {
         Self::ensure_client(api_server);
         let body = serde_json::json!({
             "op": op,
             "id": id,
             "uuid": uuid,
+            "clientSecret": client_secret,
             "deviceInfo": crate::ui_interface::get_login_device_info(),
         })
         .to_string();
@@ -180,10 +182,16 @@ impl OidcSession {
         code: &str,
         id: &str,
         uuid: &str,
+        client_secret: &str,
     ) -> ResultType<HbbHttpResponse<AuthBody>> {
         let url = Url::parse_with_params(
             &format!("{}/api/oidc/auth-query", api_server),
-            &[("code", code), ("id", id), ("uuid", uuid)],
+            &[
+                ("code", code),
+                ("id", id),
+                ("uuid", uuid),
+                ("clientSecret", client_secret),
+            ],
         )?;
         Self::ensure_client(api_server);
         #[derive(Deserialize)]
@@ -224,7 +232,8 @@ impl OidcSession {
     }
 
     fn auth_task(api_server: String, op: String, id: String, uuid: String, remember_me: bool) {
-        let auth_request_res = Self::auth(&api_server, &op, &id, &uuid);
+        let client_secret = uuid::Uuid::new_v4().to_string();
+        let auth_request_res = Self::auth(&api_server, &op, &id, &uuid, &client_secret);
         log::info!("Request oidc auth result: {:?}", &auth_request_res);
         let code_url = match auth_request_res {
             Ok(HbbHttpResponse::<_>::Data(code_url)) => code_url,
@@ -260,7 +269,7 @@ impl OidcSession {
         let begin = Instant::now();
         let query_timeout = OIDC_SESSION.read().unwrap().query_timeout;
         while OIDC_SESSION.read().unwrap().keep_querying && begin.elapsed() < query_timeout {
-            match Self::query(&api_server, &code_url.code, &id, &uuid) {
+            match Self::query(&api_server, &code_url.code, &id, &uuid, &client_secret) {
                 Ok(HbbHttpResponse::<_>::Data(auth_body)) => {
                     if auth_body.r#type == "access_token" {
                         if remember_me {

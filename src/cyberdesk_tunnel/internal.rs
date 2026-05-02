@@ -91,6 +91,27 @@ pub fn shutdown(body: &[u8]) -> Result<Vec<u8>> {
     }))?)
 }
 
+pub fn update(body: &[u8]) -> Result<Vec<u8>> {
+    let payload = parse_json_value(body).unwrap_or_else(|_| json!({}));
+    let requested_version = payload
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("latest")
+        .to_string();
+    let restart = payload
+        .get("restart")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    crate::updater::manually_check_update().context("failed to trigger Cyberdriver updater")?;
+
+    Ok(serde_json::to_vec(&json!({
+        "status": "update_check_started",
+        "version": requested_version,
+        "restart": restart,
+    }))?)
+}
+
 fn parse_json_value(body: &[u8]) -> Result<serde_json::Value> {
     if body.is_empty() {
         return Ok(json!({}));
