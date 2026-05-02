@@ -25,6 +25,8 @@ const LOGIN_ACCOUNT_AUTH: &str = "Login account auth";
 pub struct OidcAuthUrl {
     code: String,
     url: Url,
+    #[serde(default, rename = "userCode")]
+    user_code: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -109,7 +111,7 @@ pub struct AuthBody {
 
 pub struct OidcSession {
     warmed_api_server: Option<String>,
-    state_msg: &'static str,
+    state_msg: String,
     failed_msg: String,
     code_url: Option<OidcAuthUrl>,
     auth_body: Option<AuthBody>,
@@ -136,7 +138,7 @@ impl OidcSession {
     fn new() -> Self {
         Self {
             warmed_api_server: None,
-            state_msg: REQUESTING_ACCOUNT_AUTH,
+            state_msg: REQUESTING_ACCOUNT_AUTH.to_owned(),
             failed_msg: "".to_owned(),
             code_url: None,
             auth_body: None,
@@ -204,7 +206,7 @@ impl OidcSession {
     }
 
     fn reset(&mut self) {
-        self.state_msg = REQUESTING_ACCOUNT_AUTH;
+        self.state_msg = REQUESTING_ACCOUNT_AUTH.to_owned();
         self.failed_msg = "".to_owned();
         self.keep_querying = true;
         self.running = false;
@@ -257,7 +259,7 @@ impl OidcSession {
         OIDC_SESSION
             .write()
             .unwrap()
-            .set_state(WAITING_ACCOUNT_AUTH, "".to_owned());
+            .set_state(confirmation_state_message(&code_url), "".to_owned());
         OIDC_SESSION.write().unwrap().code_url = Some(code_url.clone());
 
         let begin = Instant::now();
@@ -322,8 +324,8 @@ impl OidcSession {
         // no need to handle "keep_querying == false"
     }
 
-    fn set_state(&mut self, state_msg: &'static str, failed_msg: String) {
-        self.state_msg = state_msg;
+    fn set_state(&mut self, state_msg: impl Into<String>, failed_msg: String) {
+        self.state_msg = state_msg.into();
         self.failed_msg = failed_msg;
     }
 
@@ -365,5 +367,14 @@ impl OidcSession {
 
     pub fn get_result() -> AuthResult {
         OIDC_SESSION.read().unwrap().get_result_()
+    }
+}
+
+fn confirmation_state_message(code_url: &OidcAuthUrl) -> String {
+    match code_url.user_code.as_deref() {
+        Some(user_code) if !user_code.is_empty() => {
+            format!("Enter confirmation code {user_code} in your browser")
+        }
+        _ => WAITING_ACCOUNT_AUTH.to_owned(),
     }
 }
