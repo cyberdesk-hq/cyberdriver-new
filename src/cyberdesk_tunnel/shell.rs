@@ -407,7 +407,10 @@ fn collect_session_command(
             .stdout
             .recv_timeout(remaining.min(Duration::from_millis(100)))
         {
-            Ok(chunk) => stdout.push_str(&String::from_utf8_lossy(&chunk)),
+            Ok(chunk) => {
+                stdout.push_str(&String::from_utf8_lossy(&chunk));
+                cap_session_stdout(&mut stdout, marker);
+            }
             Err(RecvTimeoutError::Timeout) => {
                 if start.elapsed() >= timeout {
                     return Err(SessionCommandError::timed_out(
@@ -431,6 +434,22 @@ fn collect_session_command(
             }
         }
     }
+}
+
+fn cap_session_stdout(output: &mut String, marker: &str) {
+    if output.len() <= MAX_OUTPUT_CHARS * 2 {
+        return;
+    }
+
+    let tail_len = marker.len().saturating_add(32);
+    let mut tail_start = output.len().saturating_sub(tail_len);
+    while !output.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+    let tail = output[tail_start..].to_string();
+    truncate_at_char_boundary(output, MAX_OUTPUT_CHARS);
+    output.push_str(TRUNCATED_MARKER);
+    output.push_str(&tail);
 }
 
 fn sessions() -> &'static Mutex<HashMap<String, Arc<Mutex<PowerShellSession>>>> {
