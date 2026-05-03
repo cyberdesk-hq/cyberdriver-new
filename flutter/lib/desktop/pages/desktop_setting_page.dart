@@ -9,6 +9,7 @@ import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/widgets/audio_input.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter_hbb/consts.dart';
+import 'package:flutter_hbb/cyberdesk_branding.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
@@ -1541,8 +1542,17 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
   bool locked = !isWeb && bind.mainIsInstalled();
+  final _cyberdeskApiKeyController = TextEditingController();
+  bool _cyberdeskApiKeyObscured = true;
 
   final scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _cyberdeskApiKeyController.dispose();
+    scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1650,6 +1660,8 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
     final outgoingOnly = bind.isOutgoingOnly();
 
     final divider = const Divider(height: 1, indent: 16, endIndent: 16);
+    final cyberdeskApiKeyConfigured =
+        bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
     return _Card(
       title: 'Network',
       children: [
@@ -1657,6 +1669,93 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              listTile(
+                icon: Icons.cloud_done_outlined,
+                title: CyberdeskBranding.tunnelStatusLabel,
+                showTooltip: true,
+                tooltipMessage:
+                    'Set a Cyberdesk org API key to enable the service-mode tunnel. Local login testing can override API Server from ID/Relay Server settings without changing release defaults.',
+                trailing: Text(
+                  cyberdeskApiKeyConfigured
+                      ? 'Configured'
+                      : CyberdeskBranding.tunnelDisabled,
+                  style: TextStyle(fontSize: _kContentFontSize),
+                ),
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: _cyberdeskApiKeyController,
+                      enabled: !locked,
+                      obscureText: _cyberdeskApiKeyObscured,
+                      decoration: InputDecoration(
+                        labelText:
+                            translate(CyberdeskBranding.apiKeyFieldLabel),
+                        hintText: cyberdeskApiKeyConfigured
+                            ? translate('API key is configured')
+                            : 'ak_...',
+                        helperText:
+                            translate(CyberdeskBranding.apiKeyHelpText),
+                        suffixIcon: IconButton(
+                          icon: Icon(_cyberdeskApiKeyObscured
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined),
+                          onPressed: locked
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _cyberdeskApiKeyObscured =
+                                        !_cyberdeskApiKeyObscured;
+                                  });
+                                },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        ElevatedButton(
+                          onPressed: locked
+                              ? null
+                              : () async {
+                                  final value =
+                                      _cyberdeskApiKeyController.text.trim();
+                                  if (value.isNotEmpty) {
+                                    final saved = await bind.mainSetLocalOption(
+                                        key: 'cyberdesk_api_key',
+                                        value: value);
+                                    if (!saved) {
+                                      showToast(translate('Failed'));
+                                      return;
+                                    }
+                                    _cyberdeskApiKeyController.clear();
+                                    setState(() {});
+                                  }
+                                },
+                          child: Text(translate('Save')),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: locked || !cyberdeskApiKeyConfigured
+                              ? null
+                              : () async {
+                                  await bind.mainSetLocalOption(
+                                      key: 'cyberdesk_api_key', value: '');
+                                  _cyberdeskApiKeyController.clear();
+                                  setState(() {});
+                                },
+                          child: Text(translate('Clear')),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (!hideServer || !hideProxy || !hideWebSocket) divider,
               if (!hideServer)
                 listTile(
                   icon: Icons.dns_outlined,

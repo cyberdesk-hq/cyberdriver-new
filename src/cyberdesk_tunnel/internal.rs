@@ -61,6 +61,13 @@ pub fn shutdown_enabled() -> bool {
     )
 }
 
+pub fn update_enabled() -> bool {
+    matches!(
+        std::env::var("CYBERDESK_ENABLE_INTERNAL_UPDATE"),
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
+    )
+}
+
 pub fn shutdown(body: &[u8]) -> Result<Vec<u8>> {
     let payload = parse_json_value(body).unwrap_or_else(|_| json!({}));
     let reason = payload
@@ -88,6 +95,14 @@ pub fn shutdown(body: &[u8]) -> Result<Vec<u8>> {
         "pid": pid,
         "reason": reason,
         "source": source,
+    }))?)
+}
+
+pub fn update(_body: &[u8]) -> Result<Vec<u8>> {
+    crate::updater::manually_check_update().context("failed to trigger Cyberdriver updater")?;
+
+    Ok(serde_json::to_vec(&json!({
+        "status": "update_check_started",
     }))?)
 }
 

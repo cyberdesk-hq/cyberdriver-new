@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/hbbs/hbbs.dart';
+import 'package:flutter_hbb/cyberdesk_branding.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/user_model.dart';
 import 'package:get/get.dart';
@@ -79,6 +80,9 @@ class ButtonOP extends StatelessWidget {
           'gitlab': 'GitLab'
         }[op.toLowerCase()] ??
         toCapitalized(op);
+    final buttonLabel = op.toLowerCase() == 'clerk'
+        ? CyberdeskBranding.loginButtonLabel
+        : translate("Continue with {$opLabel}");
     return Row(children: [
       Container(
         height: height,
@@ -103,8 +107,7 @@ class ButtonOP extends StatelessWidget {
                 Expanded(
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
-                    child: Center(
-                        child: Text(translate("Continue with {$opLabel}"))),
+                    child: Center(child: Text(buttonLabel)),
                   ),
                 ),
               ],
@@ -448,6 +451,12 @@ Future<bool?> loginDialog() async {
   });
 
   final res = await gFFI.dialogManager.show<bool>((setState, close, context) {
+    bool hasCyberdeskLoginEnabled() {
+      return loginOptions.any((option) {
+        return option is Map && option['name'] == 'clerk';
+      });
+    }
+
     username.addListener(() {
       if (usernameMsg != null) {
         setState(() => usernameMsg = null);
@@ -549,6 +558,7 @@ Future<bool?> loginDialog() async {
     }
 
     thirdAuthWidget() => Obx(() {
+          final hasCyberdeskLogin = hasCyberdeskLoginEnabled();
           return Offstage(
             offstage: loginOptions.isEmpty,
             child: Column(
@@ -556,14 +566,16 @@ Future<bool?> loginDialog() async {
                 const SizedBox(
                   height: 8.0,
                 ),
-                Center(
-                    child: Text(
-                  translate('or'),
-                  style: TextStyle(fontSize: 16),
-                )),
-                const SizedBox(
-                  height: 8.0,
-                ),
+                if (!hasCyberdeskLogin)
+                  Center(
+                      child: Text(
+                    translate('or'),
+                    style: TextStyle(fontSize: 16),
+                  )),
+                if (!hasCyberdeskLogin)
+                  const SizedBox(
+                    height: 8.0,
+                  ),
                 LoginWidgetOP(
                   ops: loginOptions
                       .map((e) => ConfigOP(op: e['name'], icon: e['icon']))
@@ -634,21 +646,30 @@ Future<bool?> loginDialog() async {
           const SizedBox(
             height: 8.0,
           ),
-          LoginWidgetUserPass(
-            username: username,
-            pass: password,
-            usernameMsg: usernameMsg,
-            passMsg: passwordMsg,
-            isInProgress: isInProgress,
-            curOP: curOP,
-            onLogin: onLogin,
-            userFocusNode: userFocusNode,
-          ),
+          Obx(() {
+            if (hasCyberdeskLoginEnabled()) {
+              return const SizedBox.shrink();
+            }
+            return LoginWidgetUserPass(
+              username: username,
+              pass: password,
+              usernameMsg: usernameMsg,
+              passMsg: passwordMsg,
+              isInProgress: isInProgress,
+              curOP: curOP,
+              onLogin: onLogin,
+              userFocusNode: userFocusNode,
+            );
+          }),
           thirdAuthWidget(),
         ],
       ),
       onCancel: onDialogCancel,
-      onSubmit: onLogin,
+      onSubmit: () {
+        if (!hasCyberdeskLoginEnabled()) {
+          onLogin();
+        }
+      },
     );
   });
 

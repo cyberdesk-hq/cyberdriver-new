@@ -1150,9 +1150,24 @@ pub fn main_set_env(key: String, value: Option<String>) -> SyncReturn<()> {
     SyncReturn(())
 }
 
-pub fn main_set_local_option(key: String, value: String) {
+pub fn main_set_local_option(key: String, value: String) -> bool {
     let is_texture_render_key = key.eq(config::keys::OPTION_TEXTURE_RENDER);
     let is_d3d_render_key = key.eq(config::keys::OPTION_ALLOW_D3D_RENDER);
+    #[cfg(feature = "cyberdesk")]
+    if key == "cyberdesk_api_key" {
+        if value.trim().is_empty() {
+            set_local_option(key, String::new());
+            return true;
+        } else if let Err(message) =
+            crate::cyberdesk_tunnel::store_configured_api_key(value.clone())
+        {
+            log::error!("refusing to store Cyberdesk API key without encryption: {message}");
+            return false;
+        } else {
+            return true;
+        }
+    }
+
     set_local_option(key, value.clone());
     if is_texture_render_key {
         let session_event = [("v", &value)];
@@ -1167,6 +1182,7 @@ pub fn main_set_local_option(key: String, value: String) {
             session.update_supported_decodings();
         }
     }
+    true
 }
 
 // We do use use `main_get_local_option` and `main_set_local_option`.

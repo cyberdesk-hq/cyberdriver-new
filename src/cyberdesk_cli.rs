@@ -86,11 +86,14 @@ enum EarlyCommand {
 struct JoinCommand {
     secret: String,
     api_base: Option<String>,
+    allow_insecure_api_base: bool,
 }
 
 struct MsiConfigureCommand {
     api_key: Option<String>,
     api_base: Option<String>,
+    allow_insecure_api_base: bool,
+    service_config_profile: bool,
     reset_fingerprint: bool,
 }
 
@@ -147,9 +150,10 @@ fn parse_join(args: &[String]) -> EarlyCommand {
         return EarlyCommand::Handled(2);
     };
 
-    let api_base = match option_value(args, "--api-base").or_else(|| option_value(args, "--host"))
-    {
-        Some(value) => match validate_api_base(&value) {
+    let allow_insecure_api_base = has_flag(args, "--allow-insecure-api-base")
+        || env_truthy("CYBERDESK_ALLOW_INSECURE_API_BASE");
+    let api_base = match option_value(args, "--api-base").or_else(|| option_value(args, "--host")) {
+        Some(value) => match validate_api_base(&value, allow_insecure_api_base) {
             Ok(value) => Some(value),
             Err(message) => {
                 eprintln!("{message}");
@@ -159,7 +163,11 @@ fn parse_join(args: &[String]) -> EarlyCommand {
         None => None,
     };
 
-    EarlyCommand::Join(JoinCommand { secret, api_base })
+    EarlyCommand::Join(JoinCommand {
+        secret,
+        api_base,
+        allow_insecure_api_base,
+    })
 }
 
 fn parse_msi_configure(args: &[String]) -> EarlyCommand {
@@ -174,9 +182,11 @@ fn parse_msi_configure(args: &[String]) -> EarlyCommand {
     }
 
     let api_key = option_value(args, "--api-key").filter(|value| !value.trim().is_empty());
+    let allow_insecure_api_base = has_flag(args, "--allow-insecure-api-base")
+        || env_truthy("CYBERDESK_ALLOW_INSECURE_API_BASE");
     let api_base = match option_value(args, "--api-base") {
         Some(value) if value.trim().is_empty() => None,
-        Some(value) => match validate_api_base(&value) {
+        Some(value) => match validate_api_base(&value, allow_insecure_api_base) {
             Ok(value) => Some(value),
             Err(message) => {
                 eprintln!("{message}");
@@ -190,6 +200,8 @@ fn parse_msi_configure(args: &[String]) -> EarlyCommand {
     EarlyCommand::MsiConfigure(MsiConfigureCommand {
         api_key,
         api_base,
+        allow_insecure_api_base,
+        service_config_profile: has_flag(args, "--service-config-profile"),
         reset_fingerprint,
     })
 }
@@ -206,19 +218,30 @@ fn read_msi_config_from_stdin() -> Result<MsiConfigureCommand, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
-    let api_base = match lines.next().map(str::trim).filter(|value| !value.is_empty()) {
-        Some(value) => Some(validate_api_base(value)?),
+    let api_base_raw = lines.next().map(str::trim).filter(|value| !value.is_empty());
+    let allow_insecure_api_base = lines
+        .next()
+        .map(parse_truthy)
+        .unwrap_or_else(|| env_truthy("CYBERDESK_ALLOW_INSECURE_API_BASE"));
+    let api_base = match api_base_raw {
+        Some(value) => Some(validate_api_base(value, allow_insecure_api_base)?),
         None => None,
     };
 
     Ok(MsiConfigureCommand {
         api_key,
         api_base,
+        allow_insecure_api_base,
+        service_config_profile: has_flag(
+            &std::env::args().collect::<Vec<_>>(),
+            "--service-config-profile",
+        ),
         reset_fingerprint: false,
     })
 }
 
 fn run_join(join: JoinCommand) {
+    let _ = join.allow_insecure_api_base;
     if let Err(message) = ensure_runtime_display_available() {
         eprintln!("{message}");
         std::process::exit(2);
@@ -245,6 +268,10 @@ fn run_join(join: JoinCommand) {
 }
 
 fn run_msi_configure(configure: MsiConfigureCommand) {
+    let _ = configure.allow_insecure_api_base;
+    if configure.service_config_profile {
+        use_windows_service_config_profile();
+    }
     if let Some(api_key) = configure.api_key {
         if !api_key.trim().is_empty() {
             if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(api_key) {
@@ -263,6 +290,19 @@ fn run_msi_configure(configure: MsiConfigureCommand) {
         }
     }
 }
+
+#[cfg(windows)]
+fn use_windows_service_config_profile() {
+    let profile = r"C:\Windows\ServiceProfiles\LocalService";
+    std::env::set_var("USERPROFILE", profile);
+    std::env::set_var("APPDATA", format!(r"{profile}\AppData\Roaming"));
+    std::env::set_var("LOCALAPPDATA", format!(r"{profile}\AppData\Local"));
+    let _ = std::fs::create_dir_all(format!(r"{profile}\AppData\Roaming"));
+    let _ = std::fs::create_dir_all(format!(r"{profile}\AppData\Local"));
+}
+
+#[cfg(not(windows))]
+fn use_windows_service_config_profile() {}
 
 fn spawn_join_runtime() -> std::io::Result<std::process::Child> {
     let mut command = std::process::Command::new(std::env::current_exe()?);
@@ -409,7 +449,7 @@ fn print_help() {
         r#"Cyberdriver
 
 Usage:
-  cyberdriver join --secret <ak_*> [--name <name>] [--api-base <ws-or-http-base>]
+  cyberdriver join --secret <ak_*> [--name <name>] [--api-base <ws-or-http-base>] [--allow-insecure-api-base]
   cyberdriver status
   cyberdriver health
   cyberdriver config-print
@@ -427,7 +467,7 @@ fn print_join_help() {
         r#"Cyberdriver join
 
 Usage:
-  cyberdriver join --secret <ak_*> [--name <name>] [--api-base <ws-or-http-base>]
+  cyberdriver join --secret <ak_*> [--name <name>] [--api-base <ws-or-http-base>] [--allow-insecure-api-base]
 
 Options:
   --secret <ak_*>          Cyberdesk API key.
@@ -435,6 +475,9 @@ Options:
                            Printable ASCII only, max 128 chars, not persisted.
   --api-base <base>        Tunnel WebSocket base, e.g. ws://localhost:8080.
   --host <host>            Compatibility shorthand for wss://<host>.
+  --allow-insecure-api-base
+                           Allow ws:// or http:// for non-loopback dev targets
+                           such as Tailscale. Never use for production.
   -h, --help               Show this help.
 
 Security:
@@ -448,7 +491,7 @@ fn api_base_from_host(host: &str) -> String {
     format!("wss://{host}")
 }
 
-fn validate_api_base(raw: &str) -> Result<String, String> {
+fn validate_api_base(raw: &str, allow_insecure_api_base: bool) -> Result<String, String> {
     let value = raw.trim();
     if value.is_empty() {
         return Err("error: --api-base must not be empty".to_string());
@@ -469,7 +512,7 @@ fn validate_api_base(raw: &str) -> Result<String, String> {
     }
 
     if lower_value.starts_with("ws://") || lower_value.starts_with("http://") {
-        if is_loopback_api_base(value) {
+        if is_loopback_api_base(value) || allow_insecure_api_base {
             if lower_value.starts_with("http://") {
                 return Ok(format!(
                     "ws://{}",
@@ -482,7 +525,7 @@ fn validate_api_base(raw: &str) -> Result<String, String> {
             ));
         }
         return Err(
-            "error: insecure --api-base is only allowed for localhost/loopback dev targets"
+            "error: insecure --api-base is only allowed for localhost/loopback dev targets; use --allow-insecure-api-base or CYBERDESK_ALLOW_INSECURE_API_BASE=1 for explicit local dev testing"
                 .to_string(),
         );
     }
@@ -525,6 +568,8 @@ fn is_known_option(value: &str) -> bool {
             | "--api-key"
             | "--stdin"
             | "--reset-fingerprint"
+            | "--allow-insecure-api-base"
+            | "--service-config-profile"
             | "-h"
             | "--help"
     )
@@ -532,6 +577,19 @@ fn is_known_option(value: &str) -> bool {
 
 fn has_flag(args: &[String], name: &str) -> bool {
     args.iter().any(|arg| arg == name)
+}
+
+fn env_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| parse_truthy(&value))
+        .unwrap_or(false)
+}
+
+fn parse_truthy(value: &str) -> bool {
+    matches!(
+        value.trim(),
+        "1" | "Y" | "y" | "true" | "TRUE" | "True" | "yes" | "YES" | "Yes"
+    )
 }
 
 #[cfg(test)]
@@ -596,8 +654,8 @@ mod tests {
 
     #[test]
     fn validate_api_base_omits_empty_msi_stdin_values() {
-        assert!(validate_api_base("").is_err());
-        assert!(validate_api_base("   ").is_err());
+        assert!(validate_api_base("", false).is_err());
+        assert!(validate_api_base("   ", false).is_err());
     }
 
     #[test]
@@ -612,60 +670,72 @@ mod tests {
 
     #[test]
     fn validate_api_base_rejects_insecure_non_loopback() {
-        assert!(validate_api_base("").is_err());
-        assert!(validate_api_base("   ").is_err());
-        assert!(validate_api_base("ws://api.cyberdesk.io").is_err());
-        assert!(validate_api_base("http://10.0.0.10:8080").is_err());
-        assert!(validate_api_base("HTTP://10.0.0.10:8080").is_err());
-        assert!(validate_api_base("http://evil.com#@localhost:8080").is_err());
-        assert!(validate_api_base("ftp://api.cyberdesk.io").is_err());
+        assert!(validate_api_base("", false).is_err());
+        assert!(validate_api_base("   ", false).is_err());
+        assert!(validate_api_base("ws://api.cyberdesk.io", false).is_err());
+        assert!(validate_api_base("http://10.0.0.10:8080", false).is_err());
+        assert!(validate_api_base("HTTP://10.0.0.10:8080", false).is_err());
+        assert!(validate_api_base("http://evil.com#@localhost:8080", false).is_err());
+        assert!(validate_api_base("ftp://api.cyberdesk.io", false).is_err());
     }
 
     #[test]
     fn validate_api_base_allows_secure_and_local_dev_targets() {
         assert_eq!(
-            validate_api_base("api.cyberdesk.io"),
+            validate_api_base("api.cyberdesk.io", false),
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
-            validate_api_base("https://api.cyberdesk.io"),
+            validate_api_base("https://api.cyberdesk.io", false),
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
-            validate_api_base("HTTPS://api.cyberdesk.io"),
+            validate_api_base("HTTPS://api.cyberdesk.io", false),
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
-            validate_api_base("ws://localhost:8080"),
+            validate_api_base("ws://localhost:8080", false),
             Ok("ws://localhost:8080".to_string())
         );
         assert_eq!(
-            validate_api_base("WS://localhost:8080"),
+            validate_api_base("WS://localhost:8080", false),
             Ok("ws://localhost:8080".to_string())
         );
         assert_eq!(
-            validate_api_base("http://127.0.0.1:8080"),
+            validate_api_base("http://127.0.0.1:8080", false),
             Ok("ws://127.0.0.1:8080".to_string())
         );
         assert_eq!(
-            validate_api_base("ws://[::1]:8080"),
+            validate_api_base("ws://[::1]:8080", false),
             Ok("ws://[::1]:8080".to_string())
         );
         assert_eq!(
-            validate_api_base("http://[::1]"),
+            validate_api_base("http://[::1]", false),
             Ok("ws://[::1]".to_string())
         );
         assert_eq!(
-            validate_api_base("api.cyberdesk.io/"),
+            validate_api_base("api.cyberdesk.io/", false),
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
-            validate_api_base("https://api.cyberdesk.io/"),
+            validate_api_base("https://api.cyberdesk.io/", false),
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
-            validate_api_base("ws://localhost:8080/"),
+            validate_api_base("ws://localhost:8080/", false),
             Ok("ws://localhost:8080".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_api_base_allows_explicit_insecure_dev_targets() {
+        assert_eq!(
+            validate_api_base("ws://100.66.79.97:8080", true),
+            Ok("ws://100.66.79.97:8080".to_string())
+        );
+        assert_eq!(
+            validate_api_base("http://10.0.0.10:8080", true),
+            Ok("ws://10.0.0.10:8080".to_string())
         );
     }
 }

@@ -16,9 +16,7 @@
 // M7 shell/internal basics:
 //   POST /computer/shell/powershell/{simple,test,exec,session}
 //   GET /internal/diagnostics
-//   POST /internal/{shutdown,keepalive/remote/*}
-// Future milestones add:
-//       POST /internal/update
+//   POST /internal/{shutdown,update,keepalive/remote/*}
 //
 // Unknown paths return 501 + a small JSON error body so
 // the caller can clearly tell "your tunnel is alive, this endpoint is
@@ -134,6 +132,19 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
                 }
             }
         }
+        ("POST", "/internal/update") => {
+            if !internal::update_enabled() {
+                json_error(
+                    403,
+                    "internal update is disabled on this agent".to_string(),
+                )
+            } else {
+                match internal::update(body) {
+                    Ok(body) => (200, body, "application/json"),
+                    Err(err) => json_error(500, format!("update failed: {err:#}")),
+                }
+            }
+        },
         ("POST", "/internal/keepalive/remote/activity") => match internal::keepalive_activity() {
             Ok(response) => response,
             Err(err) => json_error(500, format!("keepalive activity failed: {err:#}")),

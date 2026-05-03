@@ -16,7 +16,7 @@
 		<CustomAction Id="AddFirewallRules.SetParam" Return="check" Property="AddFirewallRules" Value="1[INSTALLFOLDER_INNER]$(var.Product).exe" />
 		<CustomAction Id="RemoveFirewallRules.SetParam" Return="check" Property="RemoveFirewallRules" Value="0[INSTALLFOLDER_INNER]$(var.Product).exe" />
 		<CustomAction Id="CreateStartService.SetParam" Return="check" Property="CreateStartService" Value="$(var.Product);&quot;[INSTALLFOLDER_INNER]$(var.Product).exe&quot; --service;[REGISTER_NOW]" />
-		<CustomAction Id="ConfigureCyberdesk.SetParam" Return="check" Property="ConfigureCyberdesk" Value="[INSTALLFOLDER_INNER]$(var.Product).exe;[APIKEY];[CYBERDESK_API_BASE]" />
+		<CustomAction Id="ConfigureCyberdesk.SetParam" Return="check" Property="ConfigureCyberdesk" Value="[INSTALLFOLDER_INNER]$(var.Product).exe;[APIKEY];[CYBERDESK_API_BASE];[CYBERDESK_ALLOW_INSECURE_API_BASE]" />
 		<CustomAction Id="TryStopDeleteService.SetParam" Return="check" Property="TryStopDeleteService" Value="$(var.Product)" />
 
 		<CustomAction Id="LaunchApp" ExeCommand="" Return="asyncNoWait" FileRef="App.exe" />

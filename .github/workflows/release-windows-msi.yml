@@ -1,0 +1,132 @@
+name: Cyberdriver Windows MSI Release
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "GitHub release tag to create/update"
+        required: false
+        default: "test"
+
+permissions:
+  contents: write
+
+env:
+  RUST_VERSION: "1.75"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_DEFAULT_HOST_TRIPLET: "x64-windows-static"
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || 'test' }}
+
+jobs:
+  build-windows-msi:
+    name: Build Windows MSI
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: windows-msi
+
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        shell: bash
+        run: |
+          if ! "$VCPKG_ROOT/vcpkg" install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"; then
+            find "$VCPKG_ROOT/" -name "*.log" | while read -r log_file; do
+              echo "$log_file:"
+              echo "======"
+              cat "$log_file"
+              echo "======"
+              echo ""
+            done
+            exit 1
+          fi
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Read Cyberdriver version
+        id: version
+        shell: pwsh
+        run: |
+          $cargo = Get-Content Cargo.toml -Raw
+          if ($cargo -notmatch '(?ms)^\[package\]\s*$.*?^version\s*=\s*"([^"]+)"') {
+            throw "Could not read version from Cargo.toml"
+          }
+          "version=$($Matches[1])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build Cyberdriver service binary
+        shell: pwsh
+        run: |
+          cargo build --release --features cyberdesk --bin rustdesk
+          Push-Location libs\virtual_display\dylib
+          cargo build --release
+          Pop-Location
+
+      - name: Prepare MSI input directory
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force msi-dist -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force msi-dist | Out-Null
+          Copy-Item target\release\rustdesk.exe msi-dist\Cyberdriver.exe
+          Copy-Item target\release\deps\dylib_virtual_display.dll msi-dist\dylib_virtual_display.dll
+          Get-ChildItem msi-dist
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          Push-Location res\msi
+          python preprocess.py --arp -d ../../msi-dist --app-name Cyberdriver -m "Cyberdesk Inc." -v "${{ steps.version.outputs.version }}"
+          nuget restore msi.sln
+          msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+          Pop-Location
+          New-Item -ItemType Directory -Force SignOutput | Out-Null
+          Copy-Item res\msi\Package\bin\x64\Release\en-us\Package.msi "SignOutput\Cyberdriver-${{ steps.version.outputs.version }}-windows-x64.msi"
+          Get-FileHash "SignOutput\Cyberdriver-${{ steps.version.outputs.version }}-windows-x64.msi" -Algorithm SHA256
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyberdriver-windows-msi
+          path: SignOutput/Cyberdriver-*-windows-x64.msi
+
+      - name: Publish test release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: Cyberdriver ${{ env.RELEASE_TAG }}
+          prerelease: true
+          make_latest: false
+          files: SignOutput/Cyberdriver-*-windows-x64.msi
+          body: |
+            Automated Cyberdriver Windows MSI build from `${{ github.ref_name }}`.
+
+            This artifact is unsigned and may be flagged by Windows Defender or SmartScreen.

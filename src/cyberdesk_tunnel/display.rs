@@ -13,7 +13,10 @@
 // contract was always 1024x768. Keeping that invariant avoids opening
 // a frontend/agent coordinate-scaling surface during the Rust rewrite.
 
-use hbb_common::anyhow::{bail, Context, Result};
+use hbb_common::{
+    anyhow::{bail, Context, Result},
+    log,
+};
 use image::{imageops::FilterType, DynamicImage, ImageOutputFormat, RgbaImage};
 #[cfg(not(windows))]
 use scrap::Capturer;
@@ -27,6 +30,10 @@ use std::{
 const DEFAULT_SCREENSHOT_WIDTH: u32 = 1024;
 const DEFAULT_SCREENSHOT_HEIGHT: u32 = 768;
 const CAPTURE_RETRIES: usize = 3;
+#[cfg(windows)]
+const WINDOWS_CAPTURE_RETRIES: usize = 8;
+#[cfg(windows)]
+const WINDOWS_DXGI_WOULDBLOCK_BEFORE_GDI: usize = 3;
 
 pub fn dimensions() -> Result<Vec<u8>> {
     let (width, height) = primary_dimensions()?;
@@ -112,12 +119,14 @@ fn capture_primary_rgba_scrap() -> Result<(usize, usize, Vec<u8>)> {
 fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
     let (_, _, mut capturer) = create_windows_capturer()?;
     let mut last_error = None;
+    let mut dxgi_would_block_count = 0;
 
-    for _ in 0..CAPTURE_RETRIES {
+    for _ in 0..WINDOWS_CAPTURE_RETRIES {
         if crate::platform::windows::desktop_changed() {
             crate::platform::try_change_desktop();
             let (_, _, next_capturer) = create_windows_capturer()?;
             capturer = next_capturer;
+            dxgi_would_block_count = 0;
         }
 
         match capturer.frame(Duration::from_millis(250)) {
@@ -129,6 +138,15 @@ fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
             }
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                 last_error = Some(err);
+                if !capturer.is_gdi() {
+                    dxgi_would_block_count += 1;
+                    if dxgi_would_block_count >= WINDOWS_DXGI_WOULDBLOCK_BEFORE_GDI
+                        && capturer.set_gdi()
+                    {
+                        log::info!("No screenshot frame from DXGI, fall back to GDI");
+                        dxgi_would_block_count = 0;
+                    }
+                }
                 thread::sleep(Duration::from_millis(50));
             }
             Err(err) => {

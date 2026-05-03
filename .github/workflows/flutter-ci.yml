@@ -1,21 +1,10 @@
 name: Full Flutter CI
 
 on:
+  # Temporarily manual-only while the Cyberdriver MVP release path is Windows
+  # service MSI focused. Keep this upstream RustDesk workflow available for
+  # future full Flutter/platform validation.
   workflow_dispatch:
-  pull_request:
-    paths-ignore:
-    - "docs/**"
-    - "README.md"
-  push:
-    branches:
-      - master
-    paths-ignore:
-      - ".github/**"
-      - "docs/**"
-      - "README.md"
-      - "res/**"
-      - "appimage/**"
-      - "flatpak/**"
 
 jobs:
   run-ci:

@@ -90,6 +90,7 @@ pub fn spawn_if_enabled() {
     // re-export. We deliberately do NOT create a new runtime here.
     hbb_common::tokio::spawn(async move {
         let mut backoff = Duration::from_secs(1);
+        let mut max_backoff_failures = 0_u8;
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
             let machine_name = crate::cyberdesk_cli::machine_name_from_env();
@@ -101,50 +102,64 @@ pub fn spawn_if_enabled() {
                 dispatch_semaphore.clone(),
             )
             .await;
-            match result {
+            let mut retry_after = None;
+            match &result {
                 Ok(()) => {
                     log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
+                    backoff = Duration::from_secs(1);
+                    max_backoff_failures = 0;
                 }
                 Err(e) => {
+                    retry_after = e
+                        .downcast_ref::<client::RateLimited>()
+                        .map(|e| e.retry_after());
                     let message = format!("{e:?}");
                     log::error!("cyberdesk_tunnel: client exited with error: {message}");
-                    if is_non_retryable_auth_error(&message) {
+                    if client::is_non_retryable_auth_error(e) {
                         log::error!("cyberdesk_tunnel: auth rejected; tunnel will not reconnect");
                         break;
+                    }
+                    if retry_after.is_some() {
+                        backoff = Duration::from_secs(1);
+                        max_backoff_failures = 0;
+                    } else if backoff >= Duration::from_secs(16) {
+                        max_backoff_failures = max_backoff_failures.saturating_add(1);
+                        if max_backoff_failures >= 3 {
+                            log::error!(
+                                "cyberdesk_tunnel: max reconnect backoff failed 3 times; exiting for service manager restart"
+                            );
+                            std::process::exit(75);
+                        }
+                    } else {
+                        max_backoff_failures = 0;
                     }
                 }
             };
 
-            hbb_common::tokio::time::sleep(backoff).await;
-            backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
+            let sleep_for = retry_after.unwrap_or_else(|| jittered_backoff(backoff));
+            hbb_common::tokio::time::sleep(sleep_for).await;
+            if retry_after.is_none() {
+                backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
+            }
         }
     });
 }
 
-fn is_non_retryable_auth_error(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    lower.contains("close 4001")
-        || lower.contains("server rejected auth")
-        || contains_auth_status(&lower, "401", "unauthorized")
-        || contains_auth_status(&lower, "403", "forbidden")
+fn jittered_backoff(base: Duration) -> Duration {
+    let jitter_range_ms = (base.as_millis() * 30 / 100) as u64;
+    if jitter_range_ms == 0 {
+        return base;
+    }
+    let jitter_ms = random_jitter_ms(jitter_range_ms * 2 + 1) as i64 - jitter_range_ms as i64;
+    if jitter_ms >= 0 {
+        base + Duration::from_millis(jitter_ms as u64)
+    } else {
+        base.saturating_sub(Duration::from_millis((-jitter_ms) as u64))
+    }
 }
 
-fn contains_auth_status(message: &str, status: &str, status_text: &str) -> bool {
-    let status_patterns = [
-        format!("http {status}"),
-        format!("http status {status}"),
-        format!("status {status}"),
-        format!("status: {status}"),
-        format!("status={status}"),
-        format!("{status} {status_text}"),
-        format!("{status}: {status_text}"),
-        format!("{status} ({status_text})"),
-        format!("({status} {status_text})"),
-    ];
-
-    status_patterns
-        .iter()
-        .any(|pattern| message.contains(pattern))
+fn random_jitter_ms(range_ms: u64) -> u64 {
+    fastrand::u64(0..range_ms)
 }
 
 fn default_api_base() -> String {

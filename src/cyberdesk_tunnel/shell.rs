@@ -2,10 +2,8 @@
 //
 // Shell endpoints for Cyberdesk's HTTP-over-WS tunnel.
 //
-// This mirrors Cyberdriver 1.x's current PowerShell contract: commands
-// are stateless and run as separate subprocesses. The `session_id` is
-// returned for API compatibility, but no persistent shell actor is kept
-// yet; the stateful actor remains a later M7 item.
+// This mirrors Cyberdriver 1.x's current PowerShell contract: callers can run
+// one-off commands or keep a stateful PowerShell process by reusing session_id.
 
 use super::parse_json;
 use hbb_common::anyhow::{bail, Context, Result};
@@ -13,15 +11,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-#[cfg(not(windows))]
-use std::sync::OnceLock;
 use std::{
-    io::Read,
-    path::PathBuf,
-    process::{Command, Stdio},
+    collections::HashMap,
+    fmt,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    process::{Child, ChildStdin, Command, Stdio},
     sync::{
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError},
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard, OnceLock,
     },
     thread,
     time::{Duration, Instant},
@@ -30,11 +29,13 @@ use std::{
 const MAX_COMMAND_CHARS: usize = 32 * 1024;
 const MAX_OUTPUT_CHARS: usize = 64 * 1024;
 const MAX_TIMEOUT_SECONDS: f64 = 180.0;
+const MAX_SESSIONS: usize = 16;
+const TRUNCATED_MARKER: &str = "\n...<truncated>";
 
 #[derive(Debug, Deserialize)]
 struct PowerShellExecRequest {
     command: String,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     same_session: bool,
     working_directory: Option<String>,
     session_id: Option<String>,
@@ -47,6 +48,7 @@ struct PowerShellExecResponse {
     stderr: String,
     exit_code: i32,
     session_id: String,
+    session_created: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     timeout_reached: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,6 +64,55 @@ struct OutputReader {
     output: Arc<Mutex<CappedOutput>>,
     done: Receiver<()>,
 }
+
+struct PowerShellSession {
+    child: Mutex<Child>,
+    stdin: Mutex<ChildStdin>,
+    stdout: Mutex<Receiver<Vec<u8>>>,
+    stderr: Mutex<Receiver<Vec<u8>>>,
+    command_in_progress: AtomicBool,
+}
+
+struct SessionCommandGuard<'a> {
+    command_in_progress: &'a AtomicBool,
+}
+
+#[derive(Debug)]
+struct SessionCommandError {
+    message: String,
+    timed_out: bool,
+}
+
+impl SessionCommandError {
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            timed_out: false,
+        }
+    }
+
+    fn timed_out(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            timed_out: true,
+        }
+    }
+}
+
+impl fmt::Display for SessionCommandError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl Drop for SessionCommandGuard<'_> {
+    fn drop(&mut self) {
+        self.command_in_progress.store(false, Ordering::Release);
+    }
+}
+
+static POWERSHELL_SESSIONS: OnceLock<Mutex<HashMap<String, Arc<PowerShellSession>>>> =
+    OnceLock::new();
 
 pub fn simple() -> Result<Vec<u8>> {
     let result = run_command("Write-Output 'Hello World'", None, Some(5.0), None)?;
@@ -100,19 +151,29 @@ pub fn exec(body: &[u8]) -> Result<Vec<u8>> {
         .timeout
         .unwrap_or(30.0)
         .clamp(0.1, MAX_TIMEOUT_SECONDS);
-    let session_id = request
-        .session_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let result = run_command(
-        &request.command,
-        request.working_directory.as_deref(),
-        Some(timeout),
-        Some(session_id),
-    )?;
-
-    // `same_session` is accepted for compatibility with Cyberdriver 1.x. Sessions are
-    // intentionally stateless in this slice.
-    let _ = request.same_session;
+    let use_persistent_session = request.same_session && request.session_id.is_some();
+    let session_id = if use_persistent_session {
+        session_id_or_new(request.session_id)?
+    } else {
+        request
+            .session_id
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    };
+    let result = if use_persistent_session {
+        run_session_command(
+            &request.command,
+            request.working_directory.as_deref(),
+            timeout,
+            session_id,
+        )?
+    } else {
+        run_command(
+            &request.command,
+            request.working_directory.as_deref(),
+            Some(timeout),
+            Some(session_id),
+        )?
+    };
 
     Ok(serde_json::to_vec(&result)?)
 }
@@ -126,16 +187,452 @@ pub fn session(body: &[u8]) -> Result<Vec<u8>> {
 
     let request: SessionRequest = parse_json(body)?;
     match request.action.as_str() {
-        "create" => Ok(serde_json::to_vec(&json!({
-            "session_id": uuid::Uuid::new_v4().to_string(),
-            "message": "Session ID generated (sessions are stateless)"
-        }))?),
-        "destroy" => Ok(serde_json::to_vec(&json!({
-            "message": "Session destroyed (no-op in stateless mode)",
-            "session_id": request.session_id
-        }))?),
+        "create" => {
+            let session_id = create_session(request.session_id)?;
+            Ok(serde_json::to_vec(&json!({
+                "session_id": session_id,
+                "message": "Session created"
+            }))?)
+        }
+        "destroy" => {
+            let session_id = require_session_id(request.session_id)?;
+            let removed = destroy_session(&session_id);
+            Ok(serde_json::to_vec(&json!({
+                "message": if removed { "Session destroyed" } else { "Session not found" },
+                "session_id": session_id
+            }))?)
+        }
         _ => bail!("invalid action. Must be 'create' or 'destroy'"),
     }
+}
+
+fn run_session_command(
+    command: &str,
+    working_directory: Option<&str>,
+    timeout_seconds: f64,
+    session_id: String,
+) -> Result<PowerShellExecResponse> {
+    let (session, session_created) = {
+        let mut guard = lock_sessions();
+        if let Some(session) = guard.get(&session_id) {
+            (session.clone(), false)
+        } else {
+            if guard.len() >= MAX_SESSIONS {
+                bail!("too many active PowerShell sessions");
+            }
+            let session = Arc::new(spawn_session()?);
+            guard.insert(session_id.clone(), session.clone());
+            (session, true)
+        }
+    };
+
+    let resolved_working_directory = resolve_session_working_directory(working_directory)?;
+    let marker = format!("__CYBERDRIVER_END_{}__", uuid::Uuid::new_v4().simple());
+    let wrapped = wrap_session_command(command, resolved_working_directory.as_deref(), &marker);
+    let timeout = Duration::from_secs_f64(timeout_seconds.clamp(0.1, MAX_TIMEOUT_SECONDS));
+    let session_status = lock_child(&session)
+        .try_wait()
+        .context("failed checking PowerShell session")?;
+    if let Some(status) = session_status {
+        remove_and_terminate_session(&session_id, &session);
+        bail!("PowerShell session exited before command (status={status})");
+    }
+
+    let command_guard = match try_begin_session_command(&session) {
+        Ok(guard) => guard,
+        Err(err) => {
+            return Ok(PowerShellExecResponse {
+                stdout: String::new(),
+                stderr: err.to_string(),
+                exit_code: -1,
+                session_id,
+                session_created,
+                timeout_reached: None,
+                error: Some(err.to_string()),
+            });
+        }
+    };
+    let command_result = (|| -> std::result::Result<(String, String, i32), SessionCommandError> {
+        {
+            let stdout_rx = lock_stdout(&session);
+            discard_chunks(&stdout_rx);
+        }
+        let mut stdin = lock_stdin(&session);
+        stdin.write_all(wrapped.as_bytes()).map_err(|err| {
+            SessionCommandError::failed(format!(
+                "failed to write command to PowerShell session: {err}"
+            ))
+        })?;
+        stdin.flush().map_err(|err| {
+            SessionCommandError::failed(format!("failed to flush PowerShell session stdin: {err}"))
+        })?;
+        drop(stdin);
+        collect_session_command(&session, &marker, timeout)
+    })();
+    drop(command_guard);
+
+    match command_result {
+        Ok((stdout, stderr, exit_code)) => Ok(PowerShellExecResponse {
+            stdout,
+            stderr,
+            exit_code,
+            session_id,
+            session_created,
+            timeout_reached: None,
+            error: None,
+        }),
+        Err(err) => {
+            remove_and_terminate_session(&session_id, &session);
+            let exit_code = if err.timed_out { 124 } else { -1 };
+            let timeout_reached = Some(err.timed_out);
+            let error = if err.timed_out {
+                "PowerShell session command timed out; session was destroyed"
+            } else {
+                "PowerShell session command failed; session was destroyed"
+            };
+            Ok(PowerShellExecResponse {
+                stdout: String::new(),
+                stderr: err.to_string(),
+                exit_code,
+                session_id,
+                session_created,
+                timeout_reached,
+                error: Some(error.to_string()),
+            })
+        }
+    }
+}
+
+fn create_session(requested_session_id: Option<String>) -> Result<String> {
+    let session_id = session_id_or_new(requested_session_id)?;
+    let mut guard = lock_sessions();
+    if guard.contains_key(&session_id) {
+        return Ok(session_id);
+    }
+    if guard.len() >= MAX_SESSIONS {
+        bail!("too many active PowerShell sessions");
+    }
+    guard.insert(session_id.clone(), Arc::new(spawn_session()?));
+    Ok(session_id)
+}
+
+fn session_id_or_new(session_id: Option<String>) -> Result<String> {
+    match session_id {
+        Some(value) => normalize_session_id(&value),
+        None => Ok(uuid::Uuid::new_v4().to_string()),
+    }
+}
+
+fn require_session_id(session_id: Option<String>) -> Result<String> {
+    let value = session_id.context("missing required 'session_id'")?;
+    normalize_session_id(&value)
+}
+
+fn normalize_session_id(session_id: &str) -> Result<String> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        bail!("session_id must not be empty");
+    }
+    let parsed = uuid::Uuid::parse_str(session_id).context("session_id must be a UUID")?;
+    Ok(parsed.to_string())
+}
+
+fn destroy_session(session_id: &str) -> bool {
+    let session = {
+        let mut guard = lock_sessions();
+        guard.remove(session_id)
+    };
+    if let Some(session) = session {
+        terminate_process_tree(&mut lock_child(&session));
+        true
+    } else {
+        false
+    }
+}
+
+fn spawn_session() -> Result<PowerShellSession> {
+    let executable = powershell_executable();
+    let mut powershell = Command::new(executable);
+    powershell
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-NoExit",
+            "-Command",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        powershell.process_group(0);
+    }
+    let mut child = powershell
+        .spawn()
+        .with_context(|| format!("failed to spawn {executable} session"))?;
+    let stdin = child
+        .stdin
+        .take()
+        .context("PowerShell session stdin pipe was not captured")?;
+    let stdout = child
+        .stdout
+        .take()
+        .map(spawn_chunk_reader)
+        .context("PowerShell session stdout pipe was not captured")?;
+    let stderr = child
+        .stderr
+        .take()
+        .map(spawn_chunk_reader)
+        .context("PowerShell session stderr pipe was not captured")?;
+    Ok(PowerShellSession {
+        child: Mutex::new(child),
+        stdin: Mutex::new(stdin),
+        stdout: Mutex::new(stdout),
+        stderr: Mutex::new(stderr),
+        command_in_progress: AtomicBool::new(false),
+    })
+}
+
+fn resolve_session_working_directory(working_directory: Option<&str>) -> Result<Option<PathBuf>> {
+    match working_directory {
+        Some(dir) if !dir.trim().is_empty() => Ok(Some(resolve_working_directory(Some(dir))?)),
+        _ => Ok(None),
+    }
+}
+
+fn wrap_session_command(command: &str, working_directory: Option<&Path>, marker: &str) -> String {
+    let mut wrapped = String::new();
+    if let Some(dir) = working_directory {
+        wrapped.push_str("Set-Location -LiteralPath ");
+        wrapped.push_str(&powershell_single_quote(&dir.display().to_string()));
+        wrapped.push_str("\r\n");
+    }
+    wrapped.push_str(command);
+    wrapped.push_str("\r\n");
+    wrapped.push_str("$__cyberdriver_exit = if ($global:LASTEXITCODE -is [int]) { $global:LASTEXITCODE } else { 0 }\r\n");
+    wrapped.push_str("Write-Output (");
+    wrapped.push_str(&powershell_single_quote(marker));
+    wrapped.push_str(" + [string]$__cyberdriver_exit)\r\n");
+    wrapped
+}
+
+fn powershell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn collect_session_command(
+    session: &PowerShellSession,
+    marker: &str,
+    timeout: Duration,
+) -> std::result::Result<(String, String, i32), SessionCommandError> {
+    let start = Instant::now();
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    loop {
+        {
+            let stderr_rx = lock_stderr(session);
+            drain_chunks(&stderr_rx, &mut stderr);
+        }
+        if let Some((clean_stdout, exit_code)) = take_marked_stdout(&stdout, marker) {
+            {
+                let stdout_rx = lock_stdout(session);
+                discard_chunks(&stdout_rx);
+            }
+            {
+                let stderr_rx = lock_stderr(session);
+                drain_chunks(&stderr_rx, &mut stderr);
+            }
+            return Ok((
+                truncate_output(clean_stdout),
+                truncate_output(stderr),
+                exit_code,
+            ));
+        }
+        let remaining = timeout.checked_sub(start.elapsed()).ok_or_else(|| {
+            SessionCommandError::timed_out("PowerShell session command timed out")
+        })?;
+        match {
+            let stdout_rx = lock_stdout(session);
+            stdout_rx.recv_timeout(remaining.min(Duration::from_millis(100)))
+        } {
+            Ok(chunk) => {
+                stdout.push_str(&String::from_utf8_lossy(&chunk));
+                cap_session_stdout(&mut stdout, marker);
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if start.elapsed() >= timeout {
+                    return Err(SessionCommandError::timed_out(
+                        "PowerShell session command timed out",
+                    ));
+                }
+                if let Some(status) = lock_child(session).try_wait().map_err(|err| {
+                    SessionCommandError::failed(format!(
+                        "failed waiting for PowerShell session: {err}"
+                    ))
+                })? {
+                    return Err(SessionCommandError::failed(format!(
+                        "PowerShell session exited before command marker (status={status})"
+                    )));
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(SessionCommandError::failed(
+                    "PowerShell session stdout closed before command marker",
+                ));
+            }
+        }
+    }
+}
+
+fn cap_session_stdout(output: &mut String, marker: &str) {
+    if output.len() <= MAX_OUTPUT_CHARS * 2 {
+        return;
+    }
+
+    let tail_len = marker.len().saturating_add(32);
+    let mut tail_start = output.len().saturating_sub(tail_len);
+    while !output.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+    let tail = output[tail_start..].to_string();
+    truncate_at_char_boundary(output, MAX_OUTPUT_CHARS);
+    output.push_str(TRUNCATED_MARKER);
+    output.push_str(&tail);
+}
+
+fn sessions() -> &'static Mutex<HashMap<String, Arc<PowerShellSession>>> {
+    POWERSHELL_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn lock_sessions() -> MutexGuard<'static, HashMap<String, Arc<PowerShellSession>>> {
+    match sessions().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn lock_child(session: &PowerShellSession) -> MutexGuard<'_, Child> {
+    match session.child.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn lock_stdin(session: &PowerShellSession) -> MutexGuard<'_, ChildStdin> {
+    match session.stdin.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn lock_stdout(session: &PowerShellSession) -> MutexGuard<'_, Receiver<Vec<u8>>> {
+    match session.stdout.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn lock_stderr(session: &PowerShellSession) -> MutexGuard<'_, Receiver<Vec<u8>>> {
+    match session.stderr.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn try_begin_session_command(
+    session: &PowerShellSession,
+) -> std::result::Result<SessionCommandGuard<'_>, SessionCommandError> {
+    if session
+        .command_in_progress
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        Ok(SessionCommandGuard {
+            command_in_progress: &session.command_in_progress,
+        })
+    } else {
+        Err(SessionCommandError::failed(
+            "PowerShell session already has a command in progress",
+        ))
+    }
+}
+
+fn remove_and_terminate_session(session_id: &str, session: &Arc<PowerShellSession>) {
+    let removed = {
+        let mut guard = lock_sessions();
+        match guard.get(session_id) {
+            Some(current) if Arc::ptr_eq(current, session) => guard.remove(session_id),
+            _ => None,
+        }
+    };
+    if let Some(session) = removed {
+        terminate_process_tree(&mut lock_child(&session));
+    }
+}
+
+fn spawn_chunk_reader<R>(mut reader: R) -> Receiver<Vec<u8>>
+where
+    R: Read + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut buffer = [0_u8; 8 * 1024];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    if tx.send(buffer[..read].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+    });
+    rx
+}
+
+fn drain_chunks(rx: &Receiver<Vec<u8>>, output: &mut String) {
+    while let Ok(chunk) = rx.try_recv() {
+        if output.ends_with(TRUNCATED_MARKER) {
+            continue;
+        }
+        output.push_str(&String::from_utf8_lossy(&chunk));
+        if output.len() > MAX_OUTPUT_CHARS * 2 {
+            truncate_at_char_boundary(output, MAX_OUTPUT_CHARS * 2);
+            output.push_str(TRUNCATED_MARKER);
+            break;
+        }
+    }
+}
+
+fn discard_chunks(rx: &Receiver<Vec<u8>>) {
+    while rx.try_recv().is_ok() {}
+}
+
+fn take_marked_stdout(stdout: &str, marker: &str) -> Option<(String, i32)> {
+    let marker_pos = stdout.find(marker)?;
+    let before = stdout[..marker_pos].trim_end().to_string();
+    let after = &stdout[marker_pos + marker.len()..];
+    let after = after.trim_start();
+    let exit_len = after
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '-')
+        .map(char::len_utf8)
+        .sum();
+    if exit_len == 0 {
+        return None;
+    }
+    if !after[exit_len..].contains('\n') {
+        return None;
+    }
+    let exit_code = after[..exit_len].parse::<i32>().unwrap_or(-1);
+    Some((before, exit_code))
 }
 
 fn run_command(
@@ -196,6 +693,7 @@ fn run_command(
                 stderr,
                 exit_code: status.code().unwrap_or(-1),
                 session_id: session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                session_created: false,
                 timeout_reached: None,
                 error: None,
             });
@@ -224,6 +722,7 @@ fn run_command(
                 stderr,
                 exit_code: 124,
                 session_id: session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                session_created: false,
                 timeout_reached: Some(true),
                 error: None,
             });
@@ -375,16 +874,16 @@ fn resolve_working_directory(working_directory: Option<&str>) -> Result<PathBuf>
 
 fn truncate_output(mut output: String) -> String {
     if output.len() > MAX_OUTPUT_CHARS {
-        let mut truncate_at = MAX_OUTPUT_CHARS;
-        while !output.is_char_boundary(truncate_at) {
-            truncate_at -= 1;
-        }
-        output.truncate(truncate_at);
-        output.push_str("\n...<truncated>");
+        truncate_at_char_boundary(&mut output, MAX_OUTPUT_CHARS);
+        output.push_str(TRUNCATED_MARKER);
     }
     output
 }
 
-fn default_true() -> bool {
-    true
+fn truncate_at_char_boundary(output: &mut String, max_len: usize) {
+    let mut truncate_at = max_len;
+    while !output.is_char_boundary(truncate_at) {
+        truncate_at -= 1;
+    }
+    output.truncate(truncate_at);
 }
