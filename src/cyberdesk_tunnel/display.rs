@@ -13,7 +13,10 @@
 // contract was always 1024x768. Keeping that invariant avoids opening
 // a frontend/agent coordinate-scaling surface during the Rust rewrite.
 
-use hbb_common::anyhow::{bail, Context, Result};
+use hbb_common::{
+    anyhow::{bail, Context, Result},
+    log,
+};
 use image::{imageops::FilterType, DynamicImage, ImageOutputFormat, RgbaImage};
 #[cfg(not(windows))]
 use scrap::Capturer;
