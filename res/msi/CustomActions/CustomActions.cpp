@@ -607,7 +607,7 @@ UINT __stdcall ConfigureCyberdesk(__in MSIHANDLE hInstall)
     }
     SetHandleInformation(stdinWrite, HANDLE_FLAG_INHERIT, 0);
 
-    hr = StringCchPrintfW(cmd, sizeof(cmd) / sizeof(cmd[0]), L"\"%ls\" __cyberdesk-msi-configure --stdin", exePath);
+    hr = StringCchPrintfW(cmd, sizeof(cmd) / sizeof(cmd[0]), L"\"%ls\" __cyberdesk-msi-configure --stdin --service-config-profile", exePath);
     ExitOnFailure(hr, "Failed to build Cyberdesk configure command");
 
     si.cb = sizeof(si);

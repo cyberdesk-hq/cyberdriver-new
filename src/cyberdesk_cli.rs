@@ -93,6 +93,7 @@ struct MsiConfigureCommand {
     api_key: Option<String>,
     api_base: Option<String>,
     allow_insecure_api_base: bool,
+    service_config_profile: bool,
     reset_fingerprint: bool,
 }
 
@@ -200,6 +201,7 @@ fn parse_msi_configure(args: &[String]) -> EarlyCommand {
         api_key,
         api_base,
         allow_insecure_api_base,
+        service_config_profile: has_flag(args, "--service-config-profile"),
         reset_fingerprint,
     })
 }
@@ -230,6 +232,10 @@ fn read_msi_config_from_stdin() -> Result<MsiConfigureCommand, String> {
         api_key,
         api_base,
         allow_insecure_api_base,
+        service_config_profile: has_flag(
+            &std::env::args().collect::<Vec<_>>(),
+            "--service-config-profile",
+        ),
         reset_fingerprint: false,
     })
 }
@@ -263,6 +269,9 @@ fn run_join(join: JoinCommand) {
 
 fn run_msi_configure(configure: MsiConfigureCommand) {
     let _ = configure.allow_insecure_api_base;
+    if configure.service_config_profile {
+        use_windows_service_config_profile();
+    }
     if let Some(api_key) = configure.api_key {
         if !api_key.trim().is_empty() {
             if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(api_key) {
@@ -281,6 +290,19 @@ fn run_msi_configure(configure: MsiConfigureCommand) {
         }
     }
 }
+
+#[cfg(windows)]
+fn use_windows_service_config_profile() {
+    let profile = r"C:\Windows\ServiceProfiles\LocalService";
+    std::env::set_var("USERPROFILE", profile);
+    std::env::set_var("APPDATA", format!(r"{profile}\AppData\Roaming"));
+    std::env::set_var("LOCALAPPDATA", format!(r"{profile}\AppData\Local"));
+    let _ = std::fs::create_dir_all(format!(r"{profile}\AppData\Roaming"));
+    let _ = std::fs::create_dir_all(format!(r"{profile}\AppData\Local"));
+}
+
+#[cfg(not(windows))]
+fn use_windows_service_config_profile() {}
 
 fn spawn_join_runtime() -> std::io::Result<std::process::Child> {
     let mut command = std::process::Command::new(std::env::current_exe()?);
@@ -547,6 +569,7 @@ fn is_known_option(value: &str) -> bool {
             | "--stdin"
             | "--reset-fingerprint"
             | "--allow-insecure-api-base"
+            | "--service-config-profile"
             | "-h"
             | "--help"
     )
