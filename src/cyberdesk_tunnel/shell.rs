@@ -151,7 +151,13 @@ pub fn exec(body: &[u8]) -> Result<Vec<u8>> {
         .unwrap_or(30.0)
         .clamp(0.1, MAX_TIMEOUT_SECONDS);
     let use_persistent_session = request.same_session && request.session_id.is_some();
-    let session_id = session_id_or_new(request.session_id)?;
+    let session_id = if use_persistent_session {
+        session_id_or_new(request.session_id)?
+    } else {
+        request
+            .session_id
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    };
     let result = if use_persistent_session {
         run_session_command(
             &request.command,
