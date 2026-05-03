@@ -1725,9 +1725,13 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                                   final value =
                                       _cyberdeskApiKeyController.text.trim();
                                   if (value.isNotEmpty) {
-                                    await bind.mainSetLocalOption(
+                                    final saved = await bind.mainSetLocalOption(
                                         key: 'cyberdesk_api_key',
                                         value: value);
+                                    if (!saved) {
+                                      showToast(translate('Failed'));
+                                      return;
+                                    }
                                     _cyberdeskApiKeyController.clear();
                                     setState(() {});
                                   }

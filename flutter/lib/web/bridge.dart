@@ -922,12 +922,15 @@ class RustdeskImpl {
     ]);
   }
 
-  Future<void> mainSetLocalOption(
+  Future<bool> mainSetLocalOption(
       {required String key, required String value, dynamic hint}) {
-    return Future(() => js.context.callMethod('setByName', [
-          'option:local',
-          jsonEncode({'name': key, 'value': value})
-        ]));
+    return Future(() {
+      js.context.callMethod('setByName', [
+        'option:local',
+        jsonEncode({'name': key, 'value': value})
+      ]);
+      return true;
+    });
   }
 
   String mainGetInputSource({dynamic hint}) {
