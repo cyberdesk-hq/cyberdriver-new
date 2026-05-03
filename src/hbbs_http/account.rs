@@ -230,10 +230,13 @@ impl OidcSession {
     fn auth_task(api_server: String, op: String, id: String, uuid: String, remember_me: bool) {
         let client_secret = uuid::Uuid::new_v4().to_string();
         let auth_request_res = Self::auth(&api_server, &op, &id, &uuid, &client_secret);
-        log::info!("Request oidc auth result: {:?}", &auth_request_res);
         let code_url = match auth_request_res {
-            Ok(HbbHttpResponse::<_>::Data(code_url)) => code_url,
+            Ok(HbbHttpResponse::<_>::Data(code_url)) => {
+                log::info!("Request oidc auth result: data");
+                code_url
+            }
             Ok(HbbHttpResponse::<_>::Error(err)) => {
+                log::warn!("Request oidc auth result: error");
                 OIDC_SESSION
                     .write()
                     .unwrap()
@@ -241,6 +244,7 @@ impl OidcSession {
                 return;
             }
             Ok(_) => {
+                log::warn!("Request oidc auth result: invalid response");
                 OIDC_SESSION
                     .write()
                     .unwrap()
@@ -248,6 +252,7 @@ impl OidcSession {
                 return;
             }
             Err(err) => {
+                log::warn!("Request oidc auth request failed");
                 OIDC_SESSION
                     .write()
                     .unwrap()
