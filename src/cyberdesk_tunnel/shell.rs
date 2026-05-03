@@ -15,7 +15,7 @@ use std::{
     collections::HashMap,
     fmt,
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
         mpsc::{self, Receiver, RecvTimeoutError},
@@ -207,8 +207,9 @@ fn run_session_command(
         }
     };
 
+    let resolved_working_directory = resolve_session_working_directory(working_directory)?;
     let marker = format!("__CYBERDRIVER_END_{}__", uuid::Uuid::new_v4().simple());
-    let wrapped = wrap_session_command(command, working_directory, &marker);
+    let wrapped = wrap_session_command(command, resolved_working_directory.as_deref(), &marker);
     let timeout = Duration::from_secs_f64(timeout_seconds.clamp(0.1, MAX_TIMEOUT_SECONDS));
     let session_status = {
         let mut session = lock_session(&session);
@@ -360,14 +361,18 @@ fn spawn_session() -> Result<PowerShellSession> {
     })
 }
 
-fn wrap_session_command(command: &str, working_directory: Option<&str>, marker: &str) -> String {
+fn resolve_session_working_directory(working_directory: Option<&str>) -> Result<Option<PathBuf>> {
+    match working_directory {
+        Some(dir) if !dir.trim().is_empty() => Ok(Some(resolve_working_directory(Some(dir))?)),
+        _ => Ok(None),
+    }
+}
+
+fn wrap_session_command(command: &str, working_directory: Option<&Path>, marker: &str) -> String {
     let mut wrapped = String::new();
-    if let Some(dir) = working_directory
-        .map(str::trim)
-        .filter(|dir| !dir.is_empty())
-    {
+    if let Some(dir) = working_directory {
         wrapped.push_str("Set-Location -LiteralPath ");
-        wrapped.push_str(&powershell_single_quote(dir));
+        wrapped.push_str(&powershell_single_quote(&dir.display().to_string()));
         wrapped.push_str("\r\n");
     }
     wrapped.push_str(command);
