@@ -35,7 +35,7 @@ const TRUNCATED_MARKER: &str = "\n...<truncated>";
 #[derive(Debug, Deserialize)]
 struct PowerShellExecRequest {
     command: String,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     same_session: bool,
     working_directory: Option<String>,
     session_id: Option<String>,
@@ -874,8 +874,4 @@ fn truncate_at_char_boundary(output: &mut String, max_len: usize) {
         truncate_at -= 1;
     }
     output.truncate(truncate_at);
-}
-
-fn default_true() -> bool {
-    true
 }

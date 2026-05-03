@@ -140,7 +140,7 @@ fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
                 last_error = Some(err);
                 if !capturer.is_gdi() {
                     dxgi_would_block_count += 1;
-                    if dxgi_would_block_count > WINDOWS_DXGI_WOULDBLOCK_BEFORE_GDI
+                    if dxgi_would_block_count >= WINDOWS_DXGI_WOULDBLOCK_BEFORE_GDI
                         && capturer.set_gdi()
                     {
                         log::info!("No screenshot frame from DXGI, fall back to GDI");
