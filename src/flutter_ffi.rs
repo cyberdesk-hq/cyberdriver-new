@@ -1162,6 +1162,8 @@ pub fn main_set_local_option(key: String, value: String) {
         {
             log::error!("refusing to store Cyberdesk API key without encryption: {message}");
             return;
+        } else {
+            return;
         }
     } else {
         set_local_option(key, value.clone());

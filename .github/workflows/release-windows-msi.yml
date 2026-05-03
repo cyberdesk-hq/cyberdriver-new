@@ -77,7 +77,7 @@ jobs:
         shell: pwsh
         run: |
           $cargo = Get-Content Cargo.toml -Raw
-          if ($cargo -notmatch 'version\s*=\s*"([^"]+)"') {
+          if ($cargo -notmatch '(?ms)^\[package\]\s*$.*?^version\s*=\s*"([^"]+)"') {
             throw "Could not read version from Cargo.toml"
           }
           "version=$($Matches[1])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
