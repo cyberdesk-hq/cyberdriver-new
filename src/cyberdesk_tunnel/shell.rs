@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
     fmt,
@@ -31,6 +33,8 @@ const MAX_OUTPUT_CHARS: usize = 64 * 1024;
 const MAX_TIMEOUT_SECONDS: f64 = 180.0;
 const MAX_SESSIONS: usize = 16;
 const TRUNCATED_MARKER: &str = "\n...<truncated>";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Deserialize)]
 struct PowerShellExecRequest {
@@ -371,6 +375,7 @@ fn spawn_session() -> Result<PowerShellSession> {
     {
         powershell.process_group(0);
     }
+    configure_hidden_child_process(&mut powershell);
     let mut child = powershell
         .spawn()
         .with_context(|| format!("failed to spawn {executable} session"))?;
@@ -663,6 +668,7 @@ fn run_command(
     {
         powershell.process_group(0);
     }
+    configure_hidden_child_process(&mut powershell);
     let mut child = powershell
         .spawn()
         .with_context(|| format!("failed to spawn {executable}"))?;
@@ -819,6 +825,7 @@ fn terminate_process_tree(child: &mut std::process::Child) {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
             .status();
     }
     #[cfg(unix)]
@@ -831,6 +838,17 @@ fn terminate_process_tree(child: &mut std::process::Child) {
             .status();
     }
     let _ = child.kill();
+}
+
+fn configure_hidden_child_process(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = command;
+    }
 }
 
 fn capped_output_to_string(output: CappedOutput) -> String {
