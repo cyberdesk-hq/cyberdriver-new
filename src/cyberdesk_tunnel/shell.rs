@@ -29,6 +29,7 @@ const MAX_COMMAND_CHARS: usize = 32 * 1024;
 const MAX_OUTPUT_CHARS: usize = 64 * 1024;
 const MAX_TIMEOUT_SECONDS: f64 = 180.0;
 const MAX_SESSIONS: usize = 16;
+const TRUNCATED_MARKER: &str = "\n...<truncated>";
 
 #[derive(Debug, Deserialize)]
 struct PowerShellExecRequest {
@@ -489,10 +490,13 @@ where
 
 fn drain_chunks(rx: &Receiver<Vec<u8>>, output: &mut String) {
     while let Ok(chunk) = rx.try_recv() {
+        if output.ends_with(TRUNCATED_MARKER) {
+            continue;
+        }
         output.push_str(&String::from_utf8_lossy(&chunk));
         if output.len() > MAX_OUTPUT_CHARS * 2 {
             truncate_at_char_boundary(output, MAX_OUTPUT_CHARS * 2);
-            output.push_str("\n...<truncated>");
+            output.push_str(TRUNCATED_MARKER);
             break;
         }
     }
@@ -755,7 +759,7 @@ fn resolve_working_directory(working_directory: Option<&str>) -> Result<PathBuf>
 fn truncate_output(mut output: String) -> String {
     if output.len() > MAX_OUTPUT_CHARS {
         truncate_at_char_boundary(&mut output, MAX_OUTPUT_CHARS);
-        output.push_str("\n...<truncated>");
+        output.push_str(TRUNCATED_MARKER);
     }
     output
 }
