@@ -53,4 +53,14 @@ This file contains the declaration of all the localizable strings.
 	<String Id="MyInstallDirDlgStartMenuShortcuts" Value="Create start menu shortcuts" />
 	<String Id="MyInstallDirDlgPrinter" Value="Install RustDesk Printer" />
 
+	<String Id="CyberdeskConfigDlg_Title" Value="Cyberdesk Configuration" />
+	<String Id="CyberdeskConfigDlgTitle" Value="Configure Cyberdriver" />
+	<String Id="CyberdeskConfigDlgDescription" Value="Set up Cyberdriver for Cyberdesk automation." />
+	<String Id="CyberdeskConfigDlgInstallService" Value="Install and start Cyberdriver as a Windows service" />
+	<String Id="CyberdeskConfigDlgApiKeyLabel" Value="Cyberdesk API key" />
+	<String Id="CyberdeskConfigDlgApiKeyHelp" Value="Required for service-mode automation. Leave blank only for client-only installs." />
+	<String Id="CyberdeskConfigDlgApiBaseLabel" Value="Cyberdesk API base (optional)" />
+	<String Id="CyberdeskConfigDlgApiBaseHelp" Value="Leave blank for production. Use wss:// or https:// for deployed environments." />
+	<String Id="CyberdeskConfigDlgAllowInsecureApiBase" Value="Allow insecure local/dev API base (ws:// or http://)" />
+
 </WixLocalization>
