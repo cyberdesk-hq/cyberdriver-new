@@ -26,7 +26,9 @@ use std::{
 
 const DEFAULT_SCREENSHOT_WIDTH: u32 = 1024;
 const DEFAULT_SCREENSHOT_HEIGHT: u32 = 768;
-const CAPTURE_RETRIES: usize = 3;
+const CAPTURE_RETRIES: usize = 25;
+const CAPTURE_FRAME_TIMEOUT: Duration = Duration::from_millis(500);
+const CAPTURE_RETRY_SLEEP: Duration = Duration::from_millis(100);
 
 pub fn dimensions() -> Result<Vec<u8>> {
     let (width, height) = primary_dimensions()?;
@@ -84,7 +86,7 @@ fn capture_primary_rgba_scrap() -> Result<(usize, usize, Vec<u8>)> {
     let mut last_error = None;
 
     for _ in 0..CAPTURE_RETRIES {
-        match capturer.frame(Duration::from_millis(250)) {
+        match capturer.frame(CAPTURE_FRAME_TIMEOUT) {
             Ok(Frame::PixelBuffer(pixel_buffer)) => {
                 return rgba_from_pixel_buffer(&pixel_buffer);
             }
@@ -93,11 +95,11 @@ fn capture_primary_rgba_scrap() -> Result<(usize, usize, Vec<u8>)> {
             }
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                 last_error = Some(err);
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(CAPTURE_RETRY_SLEEP);
             }
             Err(err) => {
                 last_error = Some(err);
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(CAPTURE_RETRY_SLEEP);
             }
         }
     }
@@ -120,7 +122,7 @@ fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
             capturer = next_capturer;
         }
 
-        match capturer.frame(Duration::from_millis(250)) {
+        match capturer.frame(CAPTURE_FRAME_TIMEOUT) {
             Ok(Frame::PixelBuffer(pixel_buffer)) => {
                 return rgba_from_pixel_buffer(&pixel_buffer);
             }
@@ -129,7 +131,7 @@ fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
             }
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                 last_error = Some(err);
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(CAPTURE_RETRY_SLEEP);
             }
             Err(err) => {
                 if crate::platform::windows::desktop_changed() {
@@ -137,18 +139,18 @@ fn capture_primary_rgba_windows() -> Result<(usize, usize, Vec<u8>)> {
                     let (_, _, next_capturer) = create_windows_capturer()?;
                     capturer = next_capturer;
                     last_error = Some(err);
-                    thread::sleep(Duration::from_millis(50));
+                    thread::sleep(CAPTURE_RETRY_SLEEP);
                     continue;
                 }
 
                 if !capturer.is_gdi() && capturer.set_gdi() {
                     last_error = Some(err);
-                    thread::sleep(Duration::from_millis(50));
+                    thread::sleep(CAPTURE_RETRY_SLEEP);
                     continue;
                 }
 
                 last_error = Some(err);
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(CAPTURE_RETRY_SLEEP);
             }
         }
     }
