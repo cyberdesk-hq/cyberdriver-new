@@ -378,7 +378,7 @@ impl OidcSession {
 fn confirmation_state_message(code_url: &OidcAuthUrl) -> String {
     match code_url.user_code.as_deref() {
         Some(user_code) if !user_code.is_empty() => {
-            format!("Enter confirmation code {{{user_code}}} in your browser")
+            format!("Enter confirmation code {user_code} in your browser")
         }
         _ => WAITING_ACCOUNT_AUTH.to_owned(),
     }
