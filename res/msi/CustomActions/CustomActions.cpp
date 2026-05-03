@@ -540,6 +540,7 @@ UINT __stdcall ConfigureCyberdesk(__in MSIHANDLE hInstall)
     LPWSTR exePath = NULL;
     LPWSTR apiKey = NULL;
     LPWSTR apiBase = NULL;
+    LPWSTR allowInsecureApiBase = NULL;
     HANDLE stdinRead = NULL;
     HANDLE stdinWrite = NULL;
     PROCESS_INFORMATION pi = { 0 };
@@ -577,10 +578,20 @@ UINT __stdcall ConfigureCyberdesk(__in MSIHANDLE hInstall)
     }
     apiBase[0] = L'\0';
     apiBase += 1;
+    allowInsecureApiBase = wcschr(apiBase, L';');
+    if (allowInsecureApiBase != NULL) {
+        allowInsecureApiBase[0] = L'\0';
+        allowInsecureApiBase += 1;
+    }
+    else {
+        allowInsecureApiBase = (LPWSTR)L"";
+    }
 
     WcaLog(LOGMSG_STANDARD, "Configuring Cyberdesk headless options with %ls", exePath);
 
-    if (!AppendWideLineAsUtf8(apiKey, stdinPayload) || !AppendWideLineAsUtf8(apiBase, stdinPayload)) {
+    if (!AppendWideLineAsUtf8(apiKey, stdinPayload) ||
+        !AppendWideLineAsUtf8(apiBase, stdinPayload) ||
+        !AppendWideLineAsUtf8(allowInsecureApiBase, stdinPayload)) {
         WcaLog(LOGMSG_STANDARD, "Failed to encode Cyberdesk MSI configuration.");
         hr = E_FAIL;
         goto LExit;

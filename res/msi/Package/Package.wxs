@@ -14,6 +14,7 @@
 		<Property Id="INSTALL_AS_SERVICE" Secure="yes" />
 		<Property Id="REGISTER_NOW" Secure="yes" />
 		<Property Id="CYBERDESK_API_BASE" Secure="yes" />
+		<Property Id="CYBERDESK_ALLOW_INSECURE_API_BASE" Secure="yes" />
 		<Property Id="APIKEY" Secure="yes" Hidden="yes" />
 
 		<Media Id="1" Cabinet="cab1.cab" EmbedCab="yes" CompressionLevel="high" />
