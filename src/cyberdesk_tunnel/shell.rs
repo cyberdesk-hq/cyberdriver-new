@@ -515,10 +515,8 @@ fn take_marked_stdout(stdout: &str, marker: &str) -> Option<(String, i32)> {
     if exit_len == 0 {
         return None;
     }
-    after[..exit_len]
-        .parse::<i32>()
-        .ok()
-        .map(|exit_code| (before, exit_code))
+    let exit_code = after[..exit_len].parse::<i32>().unwrap_or(-1);
+    Some((before, exit_code))
 }
 
 fn run_command(
