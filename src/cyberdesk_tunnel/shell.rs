@@ -18,6 +18,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError},
         Arc, Mutex, MutexGuard, OnceLock,
     },
@@ -64,10 +65,15 @@ struct OutputReader {
 }
 
 struct PowerShellSession {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: Receiver<Vec<u8>>,
-    stderr: Receiver<Vec<u8>>,
+    child: Mutex<Child>,
+    stdin: Mutex<ChildStdin>,
+    stdout: Mutex<Receiver<Vec<u8>>>,
+    stderr: Mutex<Receiver<Vec<u8>>>,
+    command_in_progress: AtomicBool,
+}
+
+struct SessionCommandGuard<'a> {
+    command_in_progress: &'a AtomicBool,
 }
 
 #[derive(Debug)]
@@ -98,7 +104,13 @@ impl fmt::Display for SessionCommandError {
     }
 }
 
-static POWERSHELL_SESSIONS: OnceLock<Mutex<HashMap<String, Arc<Mutex<PowerShellSession>>>>> =
+impl Drop for SessionCommandGuard<'_> {
+    fn drop(&mut self) {
+        self.command_in_progress.store(false, Ordering::Release);
+    }
+}
+
+static POWERSHELL_SESSIONS: OnceLock<Mutex<HashMap<String, Arc<PowerShellSession>>>> =
     OnceLock::new();
 
 pub fn simple() -> Result<Vec<u8>> {
@@ -201,7 +213,7 @@ fn run_session_command(
             if guard.len() >= MAX_SESSIONS {
                 bail!("too many active PowerShell sessions");
             }
-            let session = Arc::new(Mutex::new(spawn_session()?));
+            let session = Arc::new(spawn_session()?);
             guard.insert(session_id.clone(), session.clone());
             session
         }
@@ -211,31 +223,45 @@ fn run_session_command(
     let marker = format!("__CYBERDRIVER_END_{}__", uuid::Uuid::new_v4().simple());
     let wrapped = wrap_session_command(command, resolved_working_directory.as_deref(), &marker);
     let timeout = Duration::from_secs_f64(timeout_seconds.clamp(0.1, MAX_TIMEOUT_SECONDS));
-    let session_status = {
-        let mut session = lock_session(&session);
-        session
-            .child
-            .try_wait()
-            .context("failed checking PowerShell session")?
-    };
+    let session_status = lock_child(&session)
+        .try_wait()
+        .context("failed checking PowerShell session")?;
     if let Some(status) = session_status {
         remove_and_terminate_session(&session_id, &session);
         bail!("PowerShell session exited before command (status={status})");
     }
 
+    let command_guard = match try_begin_session_command(&session) {
+        Ok(guard) => guard,
+        Err(err) => {
+            return Ok(PowerShellExecResponse {
+                stdout: String::new(),
+                stderr: err.to_string(),
+                exit_code: -1,
+                session_id,
+                timeout_reached: None,
+                error: Some(err.to_string()),
+            });
+        }
+    };
     let command_result = (|| -> std::result::Result<(String, String, i32), SessionCommandError> {
-        let mut session = lock_session(&session);
-        discard_chunks(&session.stdout);
-        session.stdin.write_all(wrapped.as_bytes()).map_err(|err| {
+        {
+            let stdout_rx = lock_stdout(&session);
+            discard_chunks(&stdout_rx);
+        }
+        let mut stdin = lock_stdin(&session);
+        stdin.write_all(wrapped.as_bytes()).map_err(|err| {
             SessionCommandError::failed(format!(
                 "failed to write command to PowerShell session: {err}"
             ))
         })?;
-        session.stdin.flush().map_err(|err| {
+        stdin.flush().map_err(|err| {
             SessionCommandError::failed(format!("failed to flush PowerShell session stdin: {err}"))
         })?;
-        collect_session_command(&mut session, &marker, timeout)
+        drop(stdin);
+        collect_session_command(&session, &marker, timeout)
     })();
+    drop(command_guard);
 
     match command_result {
         Ok((stdout, stderr, exit_code)) => Ok(PowerShellExecResponse {
@@ -276,7 +302,7 @@ fn create_session(requested_session_id: Option<String>) -> Result<String> {
     if guard.len() >= MAX_SESSIONS {
         bail!("too many active PowerShell sessions");
     }
-    guard.insert(session_id.clone(), Arc::new(Mutex::new(spawn_session()?)));
+    guard.insert(session_id.clone(), Arc::new(spawn_session()?));
     Ok(session_id)
 }
 
@@ -307,8 +333,7 @@ fn destroy_session(session_id: &str) -> bool {
         guard.remove(session_id)
     };
     if let Some(session) = session {
-        let mut session = lock_session(&session);
-        terminate_process_tree(&mut session.child);
+        terminate_process_tree(&mut lock_child(&session));
         true
     } else {
         false
@@ -354,10 +379,11 @@ fn spawn_session() -> Result<PowerShellSession> {
         .map(spawn_chunk_reader)
         .context("PowerShell session stderr pipe was not captured")?;
     Ok(PowerShellSession {
-        child,
-        stdin,
-        stdout,
-        stderr,
+        child: Mutex::new(child),
+        stdin: Mutex::new(stdin),
+        stdout: Mutex::new(stdout),
+        stderr: Mutex::new(stderr),
+        command_in_progress: AtomicBool::new(false),
     })
 }
 
@@ -389,7 +415,7 @@ fn powershell_single_quote(value: &str) -> String {
 }
 
 fn collect_session_command(
-    session: &mut PowerShellSession,
+    session: &PowerShellSession,
     marker: &str,
     timeout: Duration,
 ) -> std::result::Result<(String, String, i32), SessionCommandError> {
@@ -397,10 +423,19 @@ fn collect_session_command(
     let mut stdout = String::new();
     let mut stderr = String::new();
     loop {
-        drain_chunks(&session.stderr, &mut stderr);
+        {
+            let stderr_rx = lock_stderr(session);
+            drain_chunks(&stderr_rx, &mut stderr);
+        }
         if let Some((clean_stdout, exit_code)) = take_marked_stdout(&stdout, marker) {
-            discard_chunks(&session.stdout);
-            drain_chunks(&session.stderr, &mut stderr);
+            {
+                let stdout_rx = lock_stdout(session);
+                discard_chunks(&stdout_rx);
+            }
+            {
+                let stderr_rx = lock_stderr(session);
+                drain_chunks(&stderr_rx, &mut stderr);
+            }
             return Ok((
                 truncate_output(clean_stdout),
                 truncate_output(stderr),
@@ -410,10 +445,10 @@ fn collect_session_command(
         let remaining = timeout.checked_sub(start.elapsed()).ok_or_else(|| {
             SessionCommandError::timed_out("PowerShell session command timed out")
         })?;
-        match session
-            .stdout
-            .recv_timeout(remaining.min(Duration::from_millis(100)))
-        {
+        match {
+            let stdout_rx = lock_stdout(session);
+            stdout_rx.recv_timeout(remaining.min(Duration::from_millis(100)))
+        } {
             Ok(chunk) => {
                 stdout.push_str(&String::from_utf8_lossy(&chunk));
                 cap_session_stdout(&mut stdout, marker);
@@ -424,7 +459,7 @@ fn collect_session_command(
                         "PowerShell session command timed out",
                     ));
                 }
-                if let Some(status) = session.child.try_wait().map_err(|err| {
+                if let Some(status) = lock_child(session).try_wait().map_err(|err| {
                     SessionCommandError::failed(format!(
                         "failed waiting for PowerShell session: {err}"
                     ))
@@ -459,25 +494,64 @@ fn cap_session_stdout(output: &mut String, marker: &str) {
     output.push_str(&tail);
 }
 
-fn sessions() -> &'static Mutex<HashMap<String, Arc<Mutex<PowerShellSession>>>> {
+fn sessions() -> &'static Mutex<HashMap<String, Arc<PowerShellSession>>> {
     POWERSHELL_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn lock_sessions() -> MutexGuard<'static, HashMap<String, Arc<Mutex<PowerShellSession>>>> {
+fn lock_sessions() -> MutexGuard<'static, HashMap<String, Arc<PowerShellSession>>> {
     match sessions().lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     }
 }
 
-fn lock_session(session: &Arc<Mutex<PowerShellSession>>) -> MutexGuard<'_, PowerShellSession> {
-    match session.lock() {
+fn lock_child(session: &PowerShellSession) -> MutexGuard<'_, Child> {
+    match session.child.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     }
 }
 
-fn remove_and_terminate_session(session_id: &str, session: &Arc<Mutex<PowerShellSession>>) {
+fn lock_stdin(session: &PowerShellSession) -> MutexGuard<'_, ChildStdin> {
+    match session.stdin.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn lock_stdout(session: &PowerShellSession) -> MutexGuard<'_, Receiver<Vec<u8>>> {
+    match session.stdout.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn lock_stderr(session: &PowerShellSession) -> MutexGuard<'_, Receiver<Vec<u8>>> {
+    match session.stderr.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn try_begin_session_command(
+    session: &PowerShellSession,
+) -> std::result::Result<SessionCommandGuard<'_>, SessionCommandError> {
+    if session
+        .command_in_progress
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        Ok(SessionCommandGuard {
+            command_in_progress: &session.command_in_progress,
+        })
+    } else {
+        Err(SessionCommandError::failed(
+            "PowerShell session already has a command in progress",
+        ))
+    }
+}
+
+fn remove_and_terminate_session(session_id: &str, session: &Arc<PowerShellSession>) {
     let removed = {
         let mut guard = lock_sessions();
         match guard.get(session_id) {
@@ -486,8 +560,7 @@ fn remove_and_terminate_session(session_id: &str, session: &Arc<Mutex<PowerShell
         }
     };
     if let Some(session) = removed {
-        let mut session = lock_session(&session);
-        terminate_process_tree(&mut session.child);
+        terminate_process_tree(&mut lock_child(&session));
     }
 }
 
