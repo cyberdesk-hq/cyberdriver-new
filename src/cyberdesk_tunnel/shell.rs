@@ -224,6 +224,7 @@ fn run_session_command(
 
     let command_result = (|| -> std::result::Result<(String, String, i32), SessionCommandError> {
         let mut session = lock_session(&session);
+        discard_chunks(&session.stdout);
         session.stdin.write_all(wrapped.as_bytes()).map_err(|err| {
             SessionCommandError::failed(format!(
                 "failed to write command to PowerShell session: {err}"
@@ -393,6 +394,7 @@ fn collect_session_command(
     loop {
         drain_chunks(&session.stderr, &mut stderr);
         if let Some((clean_stdout, exit_code)) = take_marked_stdout(&stdout, marker) {
+            discard_chunks(&session.stdout);
             drain_chunks(&session.stderr, &mut stderr);
             return Ok((
                 truncate_output(clean_stdout),
@@ -521,6 +523,10 @@ fn drain_chunks(rx: &Receiver<Vec<u8>>, output: &mut String) {
     }
 }
 
+fn discard_chunks(rx: &Receiver<Vec<u8>>) {
+    while rx.try_recv().is_ok() {}
+}
+
 fn take_marked_stdout(stdout: &str, marker: &str) -> Option<(String, i32)> {
     let marker_pos = stdout.find(marker)?;
     let before = stdout[..marker_pos].trim_end().to_string();
@@ -532,6 +538,9 @@ fn take_marked_stdout(stdout: &str, marker: &str) -> Option<(String, i32)> {
         .map(char::len_utf8)
         .sum();
     if exit_len == 0 {
+        return None;
+    }
+    if !after[exit_len..].contains('\n') {
         return None;
     }
     let exit_code = after[..exit_len].parse::<i32>().unwrap_or(-1);
