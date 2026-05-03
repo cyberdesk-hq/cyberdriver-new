@@ -20,7 +20,7 @@ use super::{
 };
 
 use futures_util::{Sink, SinkExt, StreamExt};
-use hbb_common::anyhow::{anyhow, bail, Context, Result};
+use hbb_common::anyhow::{anyhow, Context, Error, Result};
 use hbb_common::{
     log,
     tokio::{
@@ -38,7 +38,11 @@ use std::{
 };
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{client::IntoClientRequest, http::HeaderValue, Message},
+    tungstenite::{
+        client::IntoClientRequest,
+        http::{HeaderValue, StatusCode},
+        Error as WsError, Message,
+    },
 };
 
 /// X-Piglet-Version header value. Mirrors what cyberdriver.py used to
@@ -76,6 +80,42 @@ impl fmt::Display for RateLimited {
 }
 
 impl std::error::Error for RateLimited {}
+
+#[derive(Debug)]
+pub(super) struct AuthRejected {
+    code: u16,
+}
+
+impl AuthRejected {
+    fn new(code: u16) -> Self {
+        Self { code }
+    }
+}
+
+impl fmt::Display for AuthRejected {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "cyberdesk_tunnel: server rejected auth (close {}); refusing to retry",
+            self.code
+        )
+    }
+}
+
+impl std::error::Error for AuthRejected {}
+
+pub(super) fn is_non_retryable_auth_error(error: &Error) -> bool {
+    if error.downcast_ref::<AuthRejected>().is_some() {
+        return true;
+    }
+
+    matches!(
+        error.downcast_ref::<WsError>(),
+        Some(WsError::Http(response))
+            if response.status() == StatusCode::UNAUTHORIZED
+                || response.status() == StatusCode::FORBIDDEN
+    )
+}
 
 pub(super) fn dispatch_semaphore() -> Arc<Semaphore> {
     Arc::new(Semaphore::new(MAX_IN_FLIGHT_DISPATCHES))
@@ -282,9 +322,7 @@ pub async fn run(
                         log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
                     }
                     if code == 4001 {
-                        bail!(
-                            "cyberdesk_tunnel: server rejected auth (close {code}); refusing to retry"
-                        );
+                        return Err(AuthRejected::new(code).into());
                     }
                     if code == 4008 {
                         let retry_after = retry_after_from_reason(f.reason.as_ref())

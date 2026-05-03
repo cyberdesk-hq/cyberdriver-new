@@ -118,11 +118,12 @@ pub fn spawn_if_enabled() {
                         .map(|e| e.retry_after());
                     let message = format!("{e:?}");
                     log::error!("cyberdesk_tunnel: client exited with error: {message}");
-                    if is_non_retryable_auth_error(&message) {
+                    if client::is_non_retryable_auth_error(e) {
                         log::error!("cyberdesk_tunnel: auth rejected; tunnel will not reconnect");
                         break;
                     }
                     if retry_after.is_some() {
+                        backoff = Duration::from_secs(1);
                         max_backoff_failures = 0;
                     } else if backoff >= Duration::from_secs(16) {
                         max_backoff_failures = max_backoff_failures.saturating_add(1);
@@ -145,32 +146,6 @@ pub fn spawn_if_enabled() {
             }
         }
     });
-}
-
-fn is_non_retryable_auth_error(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    lower.contains("close 4001")
-        || lower.contains("server rejected auth")
-        || contains_auth_status(&lower, "401", "unauthorized")
-        || contains_auth_status(&lower, "403", "forbidden")
-}
-
-fn contains_auth_status(message: &str, status: &str, status_text: &str) -> bool {
-    let status_patterns = [
-        format!("http {status}"),
-        format!("http status {status}"),
-        format!("status {status}"),
-        format!("status: {status}"),
-        format!("status={status}"),
-        format!("{status} {status_text}"),
-        format!("{status}: {status_text}"),
-        format!("{status} ({status_text})"),
-        format!("({status} {status_text})"),
-    ];
-
-    status_patterns
-        .iter()
-        .any(|pattern| message.contains(pattern))
 }
 
 fn jittered_backoff(base: Duration) -> Duration {
