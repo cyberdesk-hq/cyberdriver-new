@@ -1166,10 +1166,8 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
         } else {
             return true;
         }
-    } else {
-        set_local_option(key, value.clone());
     }
-    #[cfg(not(feature = "cyberdesk"))]
+
     set_local_option(key, value.clone());
     if is_texture_render_key {
         let session_event = [("v", &value)];
