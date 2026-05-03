@@ -20,10 +20,7 @@ use hbb_common::{
     password_security::{decrypt_str_or_original, encrypt_str_or_original},
 };
 use serde_derive::{Deserialize, Serialize};
-use std::{
-    path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{path::PathBuf, time::Duration};
 
 mod client;
 mod dispatch;
@@ -149,19 +146,20 @@ pub fn spawn_if_enabled() {
 }
 
 fn jittered_backoff(base: Duration) -> Duration {
-    let max_jitter_ms = (base.as_millis() * 30 / 100) as u64;
-    if max_jitter_ms == 0 {
+    let jitter_range_ms = (base.as_millis() * 30 / 100) as u64;
+    if jitter_range_ms == 0 {
         return base;
     }
-    base + Duration::from_millis(pseudo_random_jitter_ms(max_jitter_ms))
+    let jitter_ms = random_jitter_ms(jitter_range_ms * 2 + 1) as i64 - jitter_range_ms as i64;
+    if jitter_ms >= 0 {
+        base + Duration::from_millis(jitter_ms as u64)
+    } else {
+        base.saturating_sub(Duration::from_millis((-jitter_ms) as u64))
+    }
 }
 
-fn pseudo_random_jitter_ms(max_jitter_ms: u64) -> u64 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.subsec_nanos() as u64)
-        .unwrap_or(0);
-    nanos % (max_jitter_ms + 1)
+fn random_jitter_ms(range_ms: u64) -> u64 {
+    fastrand::u64(0..range_ms)
 }
 
 fn default_api_base() -> String {

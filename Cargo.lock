@@ -7301,6 +7301,7 @@ dependencies = [
  "enigo",
  "errno",
  "evdev",
+ "fastrand 2.1.0",
  "flutter_rust_bridge",
  "fon",
  "fontdb",

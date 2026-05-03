@@ -48,6 +48,7 @@ struct PowerShellExecResponse {
     stderr: String,
     exit_code: i32,
     session_id: String,
+    session_created: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     timeout_reached: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -211,17 +212,17 @@ fn run_session_command(
     timeout_seconds: f64,
     session_id: String,
 ) -> Result<PowerShellExecResponse> {
-    let session = {
+    let (session, session_created) = {
         let mut guard = lock_sessions();
         if let Some(session) = guard.get(&session_id) {
-            session.clone()
+            (session.clone(), false)
         } else {
             if guard.len() >= MAX_SESSIONS {
                 bail!("too many active PowerShell sessions");
             }
             let session = Arc::new(spawn_session()?);
             guard.insert(session_id.clone(), session.clone());
-            session
+            (session, true)
         }
     };
 
@@ -245,6 +246,7 @@ fn run_session_command(
                 stderr: err.to_string(),
                 exit_code: -1,
                 session_id,
+                session_created,
                 timeout_reached: None,
                 error: Some(err.to_string()),
             });
@@ -275,6 +277,7 @@ fn run_session_command(
             stderr,
             exit_code,
             session_id,
+            session_created,
             timeout_reached: None,
             error: None,
         }),
@@ -292,6 +295,7 @@ fn run_session_command(
                 stderr: err.to_string(),
                 exit_code,
                 session_id,
+                session_created,
                 timeout_reached,
                 error: Some(error.to_string()),
             })
@@ -689,6 +693,7 @@ fn run_command(
                 stderr,
                 exit_code: status.code().unwrap_or(-1),
                 session_id: session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                session_created: false,
                 timeout_reached: None,
                 error: None,
             });
@@ -717,6 +722,7 @@ fn run_command(
                 stderr,
                 exit_code: 124,
                 session_id: session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                session_created: false,
                 timeout_reached: Some(true),
                 error: None,
             });
