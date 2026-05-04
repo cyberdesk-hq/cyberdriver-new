@@ -15,7 +15,19 @@ class CyberdeskBranding {
   static const String agplSourceUrlServer =
       'https://github.com/cyberdesk-hq/cyberdriver-server';
   static const String urlScheme = 'cyberdesk';
-  static const String apiServerDefault = 'https://api.cyberdesk.io';
+  static const String prodRendezvousServer = 'hbbs.cyberdesk.io';
+  static const String prodRelayServer = 'hbbr.cyberdesk.io';
+  static const String prodApiServer = 'https://api.cyberdesk.io';
+  static const String prodTunnelApiBase = 'wss://api.cyberdesk.io';
+  static const String prodHbbsPubkey =
+      'zhJ/30tgM6fCP+cJro8DjPN2WnswhMiowPkehilsMYc=';
+  static const String devRendezvousServer = 'hbbs-dev.cyberdesk.io';
+  static const String devRelayServer = 'hbbr-dev.cyberdesk.io';
+  static const String devApiServer = 'https://cyberdesk-api-dev.fly.dev';
+  static const String devTunnelApiBase = 'wss://cyberdesk-api-dev.fly.dev';
+  static const String devHbbsPubkey =
+      'EHHHwBfzjJasItIOwAJAI60Jj64uJu4rpI1cdE4ulhI=';
+  static const String apiServerDefault = prodApiServer;
   static const String updateFeedUrl = 'https://updates.cyberdesk.io/manifest.json';
 
   // Display strings shown in UI. Kept here so non-engineering

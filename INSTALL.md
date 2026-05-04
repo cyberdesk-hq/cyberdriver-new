@@ -12,6 +12,12 @@ $msi="$env:TEMP\Cyberdriver.msi"; Invoke-WebRequest "https://github.com/cyberdes
 
 Replace `<YOUR_API_KEY>` with a Cyberdesk API key.
 
+For interactive CLI joins against Cyberdesk dev:
+
+```powershell
+Cyberdriver.exe join --secret "<YOUR_API_KEY>" --env dev
+```
+
 ## Production
 
 Production install instructions are not published yet.

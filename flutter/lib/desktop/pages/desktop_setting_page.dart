@@ -1571,6 +1571,63 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
     ]).marginOnly(bottom: _kListViewBottomMargin);
   }
 
+  String _currentCyberdeskEnvironment() {
+    final idServer = bind.mainGetOptionSync(key: 'custom-rendezvous-server');
+    final relayServer = bind.mainGetOptionSync(key: 'relay-server');
+    final apiServer = bind.mainGetOptionSync(key: 'api-server');
+    final key = bind.mainGetOptionSync(key: 'key');
+    if (idServer == CyberdeskBranding.devRendezvousServer &&
+        relayServer == CyberdeskBranding.devRelayServer &&
+        apiServer == CyberdeskBranding.devApiServer &&
+        key == CyberdeskBranding.devHbbsPubkey) {
+      return 'development';
+    }
+    if (idServer == CyberdeskBranding.prodRendezvousServer &&
+        relayServer == CyberdeskBranding.prodRelayServer &&
+        apiServer == CyberdeskBranding.prodApiServer &&
+        key == CyberdeskBranding.prodHbbsPubkey) {
+      return 'production';
+    }
+    final stored =
+        bind.mainGetLocalOption(key: 'cyberdesk_environment').trim();
+    if (stored == 'custom') {
+      return stored;
+    }
+    return 'custom';
+  }
+
+  Future<void> _applyCyberdeskEnvironment(String value) async {
+    if (value == 'development') {
+      await bind.mainSetOption(
+          key: 'custom-rendezvous-server',
+          value: CyberdeskBranding.devRendezvousServer);
+      await bind.mainSetOption(
+          key: 'relay-server', value: CyberdeskBranding.devRelayServer);
+      await bind.mainSetOption(
+          key: 'api-server', value: CyberdeskBranding.devApiServer);
+      await bind.mainSetOption(
+          key: 'key', value: CyberdeskBranding.devHbbsPubkey);
+      await bind.mainSetLocalOption(
+          key: 'cyberdesk_api_base',
+          value: CyberdeskBranding.devTunnelApiBase);
+    } else if (value == 'production') {
+      await bind.mainSetOption(
+          key: 'custom-rendezvous-server',
+          value: CyberdeskBranding.prodRendezvousServer);
+      await bind.mainSetOption(
+          key: 'relay-server', value: CyberdeskBranding.prodRelayServer);
+      await bind.mainSetOption(
+          key: 'api-server', value: CyberdeskBranding.prodApiServer);
+      await bind.mainSetOption(
+          key: 'key', value: CyberdeskBranding.prodHbbsPubkey);
+      await bind.mainSetLocalOption(
+          key: 'cyberdesk_api_base',
+          value: CyberdeskBranding.prodTunnelApiBase);
+    }
+    await bind.mainSetLocalOption(key: 'cyberdesk_environment', value: value);
+    setState(() {});
+  }
+
   Widget network(BuildContext context) {
     final hideServer =
         bind.mainGetBuildinOption(key: kOptionHideServerSetting) == 'Y';
@@ -1669,6 +1726,32 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              listTile(
+                icon: Icons.tune_outlined,
+                title: 'Cyberdesk environment',
+                showTooltip: true,
+                tooltipMessage:
+                    'Production is the default for customers. Development points the desktop API, hbbs, hbbr, and service tunnel at Cyberdesk dev. Use Custom for manual host overrides.',
+                trailing: DropdownButton<String>(
+                  value: _currentCyberdeskEnvironment(),
+                  underline: const SizedBox.shrink(),
+                  onChanged: locked
+                      ? null
+                      : (value) async {
+                          if (value != null) {
+                            await _applyCyberdeskEnvironment(value);
+                          }
+                        },
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'production', child: Text('Production')),
+                    DropdownMenuItem(
+                        value: 'development', child: Text('Development')),
+                    DropdownMenuItem(value: 'custom', child: Text('Custom')),
+                  ],
+                ),
+              ),
+              divider,
               listTile(
                 icon: Icons.cloud_done_outlined,
                 title: CyberdeskBranding.tunnelStatusLabel,

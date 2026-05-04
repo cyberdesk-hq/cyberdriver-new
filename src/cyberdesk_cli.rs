@@ -85,6 +85,7 @@ enum EarlyCommand {
 
 struct JoinCommand {
     secret: String,
+    environment: Option<crate::cyberdesk_branding::CyberdeskEnvironment>,
     api_base: Option<String>,
     allow_insecure_api_base: bool,
 }
@@ -152,6 +153,13 @@ fn parse_join(args: &[String]) -> EarlyCommand {
 
     let allow_insecure_api_base = has_flag(args, "--allow-insecure-api-base")
         || env_truthy("CYBERDESK_ALLOW_INSECURE_API_BASE");
+    let environment = match parse_environment(args) {
+        Ok(environment) => environment,
+        Err(message) => {
+            eprintln!("{message}");
+            return EarlyCommand::Handled(2);
+        }
+    };
     let api_base = match option_value(args, "--api-base").or_else(|| option_value(args, "--host")) {
         Some(value) => match validate_api_base(&value, allow_insecure_api_base) {
             Ok(value) => Some(value),
@@ -165,6 +173,7 @@ fn parse_join(args: &[String]) -> EarlyCommand {
 
     EarlyCommand::Join(JoinCommand {
         secret,
+        environment,
         api_base,
         allow_insecure_api_base,
     })
@@ -251,7 +260,17 @@ fn run_join(join: JoinCommand) {
         eprintln!("error: {message}");
         std::process::exit(2);
     }
+    if let Some(environment) = join.environment {
+        crate::cyberdesk_branding::apply_environment(environment);
+    }
     if let Some(api_base) = join.api_base {
+        if let Some(api_server) = api_server_from_tunnel_base(&api_base) {
+            hbb_common::config::Config::set_option("api-server".to_string(), api_server);
+            hbb_common::config::LocalConfig::set_option(
+                crate::cyberdesk_branding::ENVIRONMENT_OPTION.to_string(),
+                "custom".to_string(),
+            );
+        }
         crate::cyberdesk_tunnel::store_configured_api_base(api_base);
     }
 
@@ -385,6 +404,12 @@ fn print_config() {
     let value = json!({
         "api_key_configured": crate::cyberdesk_tunnel::configured_api_key().is_some(),
         "api_base": crate::cyberdesk_tunnel::configured_api_base(),
+        "cyberdesk_environment": hbb_common::config::LocalConfig::get_option(
+            crate::cyberdesk_branding::ENVIRONMENT_OPTION
+        ),
+        "desktop_api_server": hbb_common::config::Config::get_option("api-server"),
+        "rendezvous_server": hbb_common::config::Config::get_option("custom-rendezvous-server"),
+        "relay_server": hbb_common::config::Config::get_option("relay-server"),
         "fingerprint": crate::cyberdesk_tunnel::current_fingerprint(),
         "machine_name": machine_name_from_env(),
         "config_path": crate::cyberdesk_tunnel::config_path().display().to_string(),
@@ -467,13 +492,16 @@ fn print_join_help() {
         r#"Cyberdriver join
 
 Usage:
-  cyberdriver join --secret <ak_*> [--name <name>] [--api-base <ws-or-http-base>] [--allow-insecure-api-base]
+  cyberdriver join --secret <ak_*> [--name <name>] [--env prod|dev] [--api-base <ws-or-http-base>] [--allow-insecure-api-base]
 
 Options:
   --secret <ak_*>          Cyberdesk API key.
   --name <name>            Optional machine name sent as X-CYBERDRIVER-NAME.
                            Printable ASCII only, max 128 chars, not persisted.
+  --env <prod|dev>         Apply Cyberdesk environment preset for API, hbbs, hbbr, and key.
+  --dev                    Shorthand for --env dev.
   --api-base <base>        Tunnel WebSocket base, e.g. ws://localhost:8080.
+                           Also updates the desktop API server for GUI login.
   --host <host>            Compatibility shorthand for wss://<host>.
   --allow-insecure-api-base
                            Allow ws:// or http:// for non-loopback dev targets
@@ -537,6 +565,34 @@ fn validate_api_base(raw: &str, allow_insecure_api_base: bool) -> Result<String,
     Ok(api_base_from_host(value.trim_end_matches('/')))
 }
 
+fn parse_environment(
+    args: &[String],
+) -> Result<Option<crate::cyberdesk_branding::CyberdeskEnvironment>, String> {
+    let from_dev_flag = has_flag(args, "--dev")
+        .then_some(crate::cyberdesk_branding::CyberdeskEnvironment::Development);
+    let from_env = match option_value(args, "--env") {
+        Some(value) => match crate::cyberdesk_branding::CyberdeskEnvironment::parse(&value) {
+            Some(environment) => Some(environment),
+            None => return Err("error: --env must be one of: prod, dev".to_string()),
+        },
+        None => None,
+    };
+    match (from_dev_flag, from_env) {
+        (Some(dev), Some(env)) if dev != env => {
+            Err("error: --dev conflicts with --env prod".to_string())
+        }
+        (Some(dev), _) => Ok(Some(dev)),
+        (None, environment) => Ok(environment),
+    }
+}
+
+fn api_server_from_tunnel_base(api_base: &str) -> Option<String> {
+    api_base
+        .strip_prefix("wss://")
+        .map(|rest| format!("https://{rest}"))
+        .or_else(|| api_base.strip_prefix("ws://").map(|rest| format!("http://{rest}")))
+}
+
 fn is_loopback_api_base(value: &str) -> bool {
     let Ok(url) = url::Url::parse(value) else {
         return false;
@@ -563,6 +619,8 @@ fn is_known_option(value: &str) -> bool {
         value,
         "--secret"
             | "--name"
+            | "--env"
+            | "--dev"
             | "--api-base"
             | "--host"
             | "--api-key"
@@ -594,7 +652,11 @@ fn parse_truthy(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{option_value, sanitize_machine_name, validate_api_base, NAME_MAX_LEN};
+    use super::{
+        api_server_from_tunnel_base, option_value, parse_environment, sanitize_machine_name,
+        validate_api_base, NAME_MAX_LEN,
+    };
+    use crate::cyberdesk_branding::CyberdeskEnvironment;
 
     #[test]
     fn sanitize_machine_name_accepts_trimmed_printable_ascii() {
@@ -650,6 +712,54 @@ mod tests {
         ];
         assert_eq!(option_value(&args, "--api-base"), None);
         assert_eq!(option_value(&args, "--api-key"), Some("ak_test".to_string()));
+    }
+
+    #[test]
+    fn parse_environment_accepts_dev_and_prod_aliases() {
+        assert_eq!(
+            parse_environment(&["join".to_string(), "--env".to_string(), "dev".to_string()]),
+            Ok(Some(CyberdeskEnvironment::Development))
+        );
+        assert_eq!(
+            parse_environment(&[
+                "join".to_string(),
+                "--env=production".to_string(),
+            ]),
+            Ok(Some(CyberdeskEnvironment::Production))
+        );
+        assert_eq!(
+            parse_environment(&["join".to_string(), "--dev".to_string()]),
+            Ok(Some(CyberdeskEnvironment::Development))
+        );
+    }
+
+    #[test]
+    fn parse_environment_rejects_unknown_or_conflicting_values() {
+        assert!(parse_environment(&[
+            "join".to_string(),
+            "--env".to_string(),
+            "staging".to_string(),
+        ])
+        .is_err());
+        assert!(parse_environment(&[
+            "join".to_string(),
+            "--dev".to_string(),
+            "--env".to_string(),
+            "prod".to_string(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn api_server_from_tunnel_base_maps_websocket_scheme() {
+        assert_eq!(
+            api_server_from_tunnel_base("wss://cyberdesk-api-dev.fly.dev"),
+            Some("https://cyberdesk-api-dev.fly.dev".to_string())
+        );
+        assert_eq!(
+            api_server_from_tunnel_base("ws://localhost:8080"),
+            Some("http://localhost:8080".to_string())
+        );
     }
 
     #[test]
