@@ -116,7 +116,9 @@ pub fn spawn_if_enabled() {
                     let message = format!("{e:?}");
                     log::error!("cyberdesk_tunnel: client exited with error: {message}");
                     if client::is_non_retryable_auth_error(e) {
-                        log::error!("cyberdesk_tunnel: auth rejected; tunnel will not reconnect");
+                        log::error!(
+                            "cyberdesk_tunnel: connection rejected; tunnel will not reconnect"
+                        );
                         break;
                     }
                     if retry_after.is_some() {

@@ -104,8 +104,36 @@ impl fmt::Display for AuthRejected {
 
 impl std::error::Error for AuthRejected {}
 
+#[derive(Debug)]
+pub(super) struct MachineLimitReached {
+    reason: String,
+}
+
+impl MachineLimitReached {
+    fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+}
+
+impl fmt::Display for MachineLimitReached {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "cyberdesk_tunnel: machine limit reached; {}",
+            self.reason
+        )
+    }
+}
+
+impl std::error::Error for MachineLimitReached {}
+
 pub(super) fn is_non_retryable_auth_error(error: &Error) -> bool {
     if error.downcast_ref::<AuthRejected>().is_some() {
+        return true;
+    }
+    if error.downcast_ref::<MachineLimitReached>().is_some() {
         return true;
     }
 
@@ -323,6 +351,9 @@ pub async fn run(
                     }
                     if code == 4001 {
                         return Err(AuthRejected::new(code).into());
+                    }
+                    if code == 4009 {
+                        return Err(MachineLimitReached::new(f.reason.to_string()).into());
                     }
                     if code == 4008 {
                         let retry_after = retry_after_from_reason(f.reason.as_ref())
