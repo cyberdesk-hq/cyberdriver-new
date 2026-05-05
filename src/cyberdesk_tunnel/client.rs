@@ -22,6 +22,7 @@ use super::{
 use futures_util::{Sink, SinkExt, StreamExt};
 use hbb_common::anyhow::{anyhow, Context, Error, Result};
 use hbb_common::{
+    config::Config,
     log,
     tokio::{
         self,
@@ -180,6 +181,11 @@ pub async fn run(
             .map_err(|e| anyhow!("invalid X-Piglet-Fingerprint header value: {e}"))?,
     );
     headers.insert("x-piglet-version", HeaderValue::from_static(VERSION));
+    headers.insert(
+        "x-cyberdriver-peer-id",
+        HeaderValue::from_str(&Config::get_id())
+            .map_err(|e| anyhow!("invalid X-Cyberdriver-Peer-Id header value: {e}"))?,
+    );
     headers.insert(
         "x-piglet-hostname",
         HeaderValue::from_str(&hostname())
