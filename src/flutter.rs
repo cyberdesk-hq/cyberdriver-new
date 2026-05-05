@@ -125,6 +125,10 @@ pub extern "C" fn handle_applicationShouldOpenUntitledFile() {
 #[no_mangle]
 pub extern "C" fn rustdesk_core_main_args(args_len: *mut c_int) -> *mut *mut c_char {
     unsafe { std::ptr::write(args_len, 0) };
+    #[cfg(feature = "cyberdesk")]
+    if crate::cyberdesk_cli::handle_early_args() {
+        return std::ptr::null_mut() as _;
+    }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         if let Some(args) = crate::core_main::core_main() {

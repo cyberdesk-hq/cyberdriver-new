@@ -16,14 +16,20 @@ permissions:
 
 env:
   RUST_VERSION: "1.75"
+  LLVM_VERSION: "15.0.6"
+  FLUTTER_VERSION: "3.24.5"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   VCPKG_DEFAULT_HOST_TRIPLET: "x64-windows-static"
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || 'test' }}
 
 jobs:
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+
   build-windows-msi:
     name: Build Windows MSI
+    needs: generate-bridge
     runs-on: windows-2022
 
     steps:
@@ -32,10 +38,46 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Restore bridge files
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Replace engine with RustDesk custom Flutter engine
+        shell: pwsh
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          $engineDir = "C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release"
+          Copy-Item -Recurse -Force windows-x64-release/* $engineDir
+
+      - name: Patch Flutter
+        shell: bash
+        run: |
+          if [[ "${{ env.FLUTTER_VERSION }}" == "3.24.5" ]]; then
+            cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff "$(dirname "$(dirname "$(which flutter)")")"
+            cd "$(dirname "$(dirname "$(which flutter)")")"
+            git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@v1
@@ -82,22 +124,24 @@ jobs:
           }
           "version=$($Matches[1])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Build Cyberdriver service binary
+      - name: Build Cyberdriver Flutter bundle
         shell: pwsh
         run: |
-          cargo build --release --features cyberdesk --bin rustdesk
-          Push-Location libs\virtual_display\dylib
-          cargo build --release
-          Pop-Location
+          python .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
 
       - name: Prepare MSI input directory
         shell: pwsh
         run: |
           Remove-Item -Recurse -Force msi-dist -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force msi-dist | Out-Null
-          Copy-Item target\release\rustdesk.exe msi-dist\Cyberdriver.exe
-          Copy-Item target\release\deps\dylib_virtual_display.dll msi-dist\dylib_virtual_display.dll
-          Get-ChildItem msi-dist
+          Copy-Item -Recurse flutter\build\windows\x64\runner\Release\* msi-dist\
+          if (Test-Path msi-dist\rustdesk.exe) {
+            Rename-Item msi-dist\rustdesk.exe Cyberdriver.exe
+          }
+          if (!(Test-Path msi-dist\Cyberdriver.exe)) {
+            throw "Cyberdriver.exe was not found in Flutter release bundle"
+          }
+          Get-ChildItem -Recurse msi-dist
 
       - name: Build MSI
         shell: pwsh
