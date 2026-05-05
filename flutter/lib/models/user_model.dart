@@ -69,11 +69,10 @@ class UserModel {
       refreshingUser = true;
       final http.Response response;
       try {
+        final headers = getHttpHeaders();
+        headers['Content-Type'] = 'application/json';
         response = await http.post(Uri.parse('$url/api/currentUser'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token'
-            },
+            headers: headers,
             body: json.encode(body));
       } catch (e) {
         networkError.value = e.toString();
