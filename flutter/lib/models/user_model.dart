@@ -169,7 +169,12 @@ class UserModel {
     await bind.mainSetLocalOption(
         key: 'cyberdesk_selected_organization_id', value: organizationId);
     selectedOrganizationId.value = organizationId;
-    await refreshCurrentUser();
+    final userInfo = getLocalUserInfo();
+    if (userInfo != null) {
+      userInfo['selected_organization_id'] = organizationId;
+      await bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(userInfo));
+    }
+    await updateOtherModels();
   }
 
   // update ab and group status

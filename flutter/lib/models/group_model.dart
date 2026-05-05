@@ -223,6 +223,7 @@ class GroupModel {
 
   Future<bool> _getPeers(List<Peer> tmpPeers) async {
     try {
+      final selfId = await bind.mainGetMyId();
       final api = "${await bind.mainGetApiServer()}/api/peers";
       var uri0 = Uri.parse(api);
       final pageSize = 100;
@@ -261,6 +262,9 @@ class GroupModel {
               for (final p in data) {
                 final peerPayload = PeerPayload.fromJson(p);
                 final peer = PeerPayload.toPeer(peerPayload);
+                if (peer.id == selfId) {
+                  continue;
+                }
                 int index = tmpPeers.indexWhere((e) => e.id == peer.id);
                 if (index < 0) {
                   tmpPeers.add(peer);
