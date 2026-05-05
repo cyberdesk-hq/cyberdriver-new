@@ -2258,6 +2258,30 @@ class _AccountState extends State<_Account> {
                             ),
                           ),
                         ),
+                        if (gFFI.userModel.organizations.length > 1) ...[
+                          const SizedBox(height: 10),
+                          DropdownButton<String>(
+                            value: gFFI.userModel.selectedOrganizationId.value
+                                    .isNotEmpty
+                                ? gFFI.userModel.selectedOrganizationId.value
+                                : gFFI.userModel.organizations.first.id,
+                            isDense: true,
+                            underline: const SizedBox.shrink(),
+                            onChanged: (value) async {
+                              if (value != null) {
+                                await gFFI.userModel.switchOrganization(value);
+                              }
+                            },
+                            items: gFFI.userModel.organizations
+                                .map((org) => DropdownMenuItem<String>(
+                                      value: org.id,
+                                      child: Text(org.name.isEmpty
+                                          ? org.id
+                                          : org.name),
+                                    ))
+                                .toList(),
+                          ),
+                        ],
                       ],
                     ),
                   ),

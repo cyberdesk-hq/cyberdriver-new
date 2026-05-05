@@ -2689,9 +2689,15 @@ connect(BuildContext context, String id,
 }
 
 Map<String, String> getHttpHeaders() {
-  return {
+  final headers = {
     'Authorization': 'Bearer ${bind.mainGetLocalOption(key: 'access_token')}'
   };
+  final organizationId =
+      bind.mainGetLocalOption(key: 'cyberdesk_selected_organization_id').trim();
+  if (organizationId.isNotEmpty) {
+    headers['X-Cyberdesk-Organization-Id'] = organizationId;
+  }
+  return headers;
 }
 
 // Simple wrapper of built-in types for reference use.

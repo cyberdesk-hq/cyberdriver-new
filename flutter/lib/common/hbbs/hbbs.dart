@@ -32,6 +32,8 @@ class UserPayload {
   String? verifier;
   UserStatus status;
   bool isAdmin = false;
+  List<CyberdeskOrganization> organizations = [];
+  String selectedOrganizationId = '';
 
   UserPayload.fromJson(Map<String, dynamic> json)
       : name = json['name'] ?? '',
@@ -45,18 +47,28 @@ class UserPayload {
             : json['status'] == -1
                 ? UserStatus.kUnverified
                 : UserStatus.kNormal,
-        isAdmin = json['is_admin'] == true;
+        isAdmin = json['is_admin'] == true,
+        organizations = (json['organizations'] is List
+            ? (json['organizations'] as List)
+                .whereType<Map<String, dynamic>>()
+                .map((org) => CyberdeskOrganization.fromJson(org))
+                .toList()
+            : []),
+        selectedOrganizationId = json['selected_organization_id'] ?? '';
 
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> map = {
       'name': name,
       'display_name': displayName,
       'avatar': avatar,
+      'email': email,
       'status': status == UserStatus.kDisabled
           ? 0
           : status == UserStatus.kUnverified
               ? -1
               : 1,
+      'organizations': organizations.map((org) => org.toJson()).toList(),
+      'selected_organization_id': selectedOrganizationId,
     };
     return map;
   }
@@ -71,6 +83,22 @@ class UserPayload {
 
   String get displayNameOrName {
     return displayName.trim().isEmpty ? name : displayName;
+  }
+}
+
+class CyberdeskOrganization {
+  String id = '';
+  String name = '';
+
+  CyberdeskOrganization.fromJson(Map<String, dynamic> json)
+      : id = json['id'] ?? '',
+        name = json['name'] ?? '';
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+    };
   }
 }
 

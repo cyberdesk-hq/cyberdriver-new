@@ -20,6 +20,9 @@ class UserModel {
   final RxString avatar = ''.obs;
   final RxBool isAdmin = false.obs;
   final RxString networkError = ''.obs;
+  final RxList<CyberdeskOrganization> organizations =
+      <CyberdeskOrganization>[].obs;
+  final RxString selectedOrganizationId = ''.obs;
   bool get isLogin => userName.isNotEmpty;
   String get displayNameOrUserName =>
       displayName.value.trim().isEmpty ? userName.value : displayName.value;
@@ -47,7 +50,7 @@ class UserModel {
     });
   }
 
-  void refreshCurrentUser() async {
+  Future<void> refreshCurrentUser() async {
     if (bind.isDisableAccount()) return;
     networkError.value = '';
     final token = bind.mainGetLocalOption(key: 'access_token');
@@ -117,6 +120,15 @@ class UserModel {
       userName.value = (userInfo['name'] ?? '').toString();
       displayName.value = (userInfo['display_name'] ?? '').toString();
       avatar.value = (userInfo['avatar'] ?? '').toString();
+      selectedOrganizationId.value =
+          (userInfo['selected_organization_id'] ?? '').toString();
+      final rawOrganizations = userInfo['organizations'];
+      organizations.value = rawOrganizations is List
+          ? rawOrganizations
+              .whereType<Map<String, dynamic>>()
+              .map((org) => CyberdeskOrganization.fromJson(org))
+              .toList()
+          : [];
     }
   }
 
@@ -130,6 +142,8 @@ class UserModel {
     userName.value = '';
     displayName.value = '';
     avatar.value = '';
+    selectedOrganizationId.value = '';
+    organizations.clear();
   }
 
   _parseAndUpdateUser(UserPayload user) {
@@ -137,11 +151,26 @@ class UserModel {
     displayName.value = user.displayName;
     avatar.value = user.avatar;
     isAdmin.value = user.isAdmin;
+    organizations.value = user.organizations;
+    selectedOrganizationId.value = user.selectedOrganizationId;
+    if (selectedOrganizationId.value.isNotEmpty) {
+      bind.mainSetLocalOption(
+          key: 'cyberdesk_selected_organization_id',
+          value: selectedOrganizationId.value);
+    }
     bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(user));
     if (isWeb) {
       // ugly here, tmp solution
       bind.mainSetLocalOption(key: 'verifier', value: user.verifier ?? '');
     }
+  }
+
+  Future<void> switchOrganization(String organizationId) async {
+    if (organizationId == selectedOrganizationId.value) return;
+    await bind.mainSetLocalOption(
+        key: 'cyberdesk_selected_organization_id', value: organizationId);
+    selectedOrganizationId.value = organizationId;
+    await refreshCurrentUser();
   }
 
   // update ab and group status
