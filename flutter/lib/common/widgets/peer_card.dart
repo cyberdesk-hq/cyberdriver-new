@@ -1577,6 +1577,5 @@ void connectInPeerTab(BuildContext context, Peer peer, PeerTabIndex tab,
       isTerminal: isTerminal,
       isViewCamera: isViewCamera,
       isTcpTunneling: isTcpTunneling,
-      isRDP: isRDP,
-      forceRelay: peer.forceAlwaysRelay);
+      isRDP: isRDP);
 }

@@ -2233,26 +2233,11 @@ impl Connection {
 
     #[cfg(feature = "cyberdesk")]
     async fn validate_cyberdesk_connection_token(&self, lr: &LoginRequest) -> bool {
-        let Some(payload) = lr.avatar.strip_prefix("cyberdesk_auth:") else {
-            return false;
-        };
-        let Ok(payload) = serde_json::from_str::<serde_json::Value>(payload) else {
-            log::warn!("Cyberdesk connection token payload is invalid JSON");
-            return false;
-        };
-        let desktop_token = payload
-            .get("desktop_token")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .trim();
+        let desktop_token = lr.cyberdesk_token.trim();
         if desktop_token.is_empty() {
             return false;
         }
-        let selected_organization_id = payload
-            .get("selected_organization_id")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .trim();
+        let selected_organization_id = lr.cyberdesk_selected_organization_id.trim();
         let Some(machine_api_key) = crate::cyberdesk_tunnel::configured_api_key() else {
             log::warn!("Cyberdesk connection token present but machine API key is not configured");
             return false;

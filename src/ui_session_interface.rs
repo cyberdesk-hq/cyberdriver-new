@@ -1964,7 +1964,6 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
                         queues.insert(port, sender);
                         let handler = handler.clone();
                         let key = key.clone();
-                        let token = token.clone();
                         tokio::spawn(async move {
                             start_one_port_forward(
                                 handler,
@@ -1973,7 +1972,7 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
                                 remote_port,
                                 receiver,
                                 &key,
-                                &token,
+                                token,
                             )
                             .await;
                         });
