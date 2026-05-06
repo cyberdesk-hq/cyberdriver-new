@@ -9,6 +9,7 @@ import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
+import 'package:flutter_hbb/cyberdesk_branding.dart';
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
@@ -38,6 +39,7 @@ const borderColor = Color(0xFF2F65BA);
 class _DesktopHomePageState extends State<DesktopHomePage>
     with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   final _leftPaneScrollController = ScrollController();
+  final _cyberdeskApiKeyController = TextEditingController();
 
   @override
   bool get wantKeepAlive => true;
@@ -50,6 +52,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   var watchIsCanRecordAudio = false;
   Timer? _updateTimer;
   bool isCardClosed = false;
+  bool _cyberdeskApiKeyObscured = true;
+  bool _cyberdeskApiKeyEditing = false;
+  bool _cyberdeskApiKeySaving = false;
 
   final RxBool _editHover = false.obs;
   final RxBool _block = false.obs;
@@ -80,19 +85,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final isIncomingOnly = bind.isIncomingOnly();
     final isOutgoingOnly = bind.isOutgoingOnly();
     final children = <Widget>[
-      if (!isOutgoingOnly) buildPresetPasswordWarning(),
-      if (bind.isCustomClient())
-        Align(
-          alignment: Alignment.center,
-          child: loadPowered(context),
-        ),
-      Align(
-        alignment: Alignment.center,
-        child: loadLogo(),
-      ),
       buildTip(context),
-      if (!isOutgoingOnly) buildIDBoard(context),
-      if (!isOutgoingOnly) buildPasswordBoard(context),
+      buildCyberdeskTunnelSetting(context),
       FutureBuilder<Widget>(
         future: Future.value(
             Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
@@ -111,7 +105,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           }
         },
       ),
-      buildPluginEntry(),
     ];
     if (isIncomingOnly) {
       children.addAll([
@@ -131,7 +124,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     return ChangeNotifierProvider.value(
       value: gFFI.serverModel,
       child: Container(
-        width: isIncomingOnly ? 280.0 : 200.0,
+        width: isIncomingOnly ? 280.0 : 260.0,
         color: Theme.of(context).colorScheme.background,
         child: Stack(
           children: [
@@ -389,44 +382,201 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   buildTip(BuildContext context) {
-    final isOutgoingOnly = bind.isOutgoingOnly();
     return Padding(
       padding:
-          const EdgeInsets.only(left: 20.0, right: 16, top: 16.0, bottom: 5),
+          const EdgeInsets.only(left: 20.0, right: 16, top: 22.0, bottom: 8),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
-            children: [
-              if (!isOutgoingOnly)
-                Align(
-                  alignment: Alignment.centerLeft,
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Row(
+              children: [
+                Expanded(
                   child: Text(
-                    translate("Your Desktop"),
+                    CyberdeskBranding.appName,
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
-            ],
-          ),
-          SizedBox(
-            height: 10.0,
-          ),
-          if (!isOutgoingOnly)
-            Text(
-              translate("desk_tip"),
-              overflow: TextOverflow.clip,
-              style: Theme.of(context).textTheme.bodySmall,
+                IconButton(
+                  tooltip: translate('Settings'),
+                  icon: const Icon(Icons.settings_outlined),
+                  onPressed: () {
+                    if (DesktopSettingPage.tabKeys.isNotEmpty) {
+                      DesktopSettingPage.switch2page(
+                          DesktopSettingPage.tabKeys[0]);
+                    }
+                  },
+                ),
+              ],
             ),
-          if (isOutgoingOnly)
-            Text(
-              translate("outgoing_only_desk_tip"),
-              overflow: TextOverflow.clip,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+          ),
         ],
       ),
     );
+  }
+
+  Widget buildCyberdeskTunnelSetting(BuildContext context) {
+    final cyberdeskApiKeyConfigured =
+        bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
+    final editingApiKey = _cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured;
+    final status = !cyberdeskApiKeyConfigured
+        ? CyberdeskBranding.tunnelDisabled
+        : CyberdeskBranding.tunnelConnected;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(14),
+        color: Theme.of(context).colorScheme.background,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.cloud_done_outlined,
+                  color: MyTheme.accent, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  CyberdeskBranding.tunnelStatusLabel,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+            ],
+          ),
+          Text(
+            status,
+            style: Theme.of(context).textTheme.bodySmall,
+          ).marginOnly(top: 4, bottom: 10),
+          if (editingApiKey)
+            TextField(
+              controller: _cyberdeskApiKeyController,
+              enabled: !_cyberdeskApiKeySaving,
+              obscureText: _cyberdeskApiKeyObscured,
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: CyberdeskBranding.apiKeyFieldLabel,
+                hintText: 'ak_...',
+                suffixIcon: IconButton(
+                  icon: Icon(_cyberdeskApiKeyObscured
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined),
+                  onPressed: _cyberdeskApiKeySaving
+                      ? null
+                      : () {
+                          setState(() {
+                            _cyberdeskApiKeyObscured =
+                                !_cyberdeskApiKeyObscured;
+                          });
+                        },
+                ),
+              ),
+            )
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                border: Border.all(color: Theme.of(context).dividerColor),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'API key: ********',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _cyberdeskApiKeyEditing = true;
+                      });
+                    },
+                    child: const Text('Edit'),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _cyberdeskApiKeySaving
+                      ? null
+                      : () async {
+                          final value = _cyberdeskApiKeyController.text.trim();
+                          if (editingApiKey && value.isEmpty) {
+                            return;
+                          }
+                          setState(() {
+                            _cyberdeskApiKeySaving = true;
+                          });
+                          try {
+                            if (value.isNotEmpty) {
+                              final saved = await bind.mainSetLocalOption(
+                                  key: 'cyberdesk_api_key', value: value);
+                              if (!saved) {
+                                showToast(translate('Failed'));
+                                return;
+                              }
+                              _cyberdeskApiKeyController.clear();
+                            }
+                            await start_service(true);
+                            setState(() {
+                              _cyberdeskApiKeyEditing = false;
+                            });
+                          } finally {
+                            if (mounted) {
+                              setState(() {
+                                _cyberdeskApiKeySaving = false;
+                              });
+                            }
+                          }
+                        },
+                  child: _cyberdeskApiKeySaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(editingApiKey ? 'Save and connect' : 'Reconnect'),
+                ),
+              ),
+              if (cyberdeskApiKeyConfigured) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: _cyberdeskApiKeySaving
+                      ? null
+                      : () async {
+                          await bind.mainSetLocalOption(
+                              key: 'cyberdesk_api_key', value: '');
+                          _cyberdeskApiKeyController.clear();
+                          setState(() {
+                            _cyberdeskApiKeyEditing = true;
+                          });
+                        },
+                  child: const Text('Clear'),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _ensureCyberdeskRemoteDefaults() async {
+    if (bind.mainGetUserDefaultOption(key: kOptionViewStyle).isEmpty) {
+      await bind.mainSetUserDefaultOption(
+          key: kOptionViewStyle, value: kRemoteViewStyleAdaptive);
+    }
   }
 
   Widget buildHelpCards(String updateUrl) {
@@ -703,6 +853,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   @override
   void initState() {
     super.initState();
+    _ensureCyberdeskRemoteDefaults();
     _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {
       await gFFI.serverModel.fetchID();
       final error = await bind.mainGetError();
@@ -773,7 +924,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
     bool isChattyMethod(String methodName) {
       switch (methodName) {
-        case kWindowBumpMouse: return true;
+        case kWindowBumpMouse:
+          return true;
       }
 
       return false;
@@ -782,7 +934,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
       if (!isChattyMethod(call.method)) {
         debugPrint(
-          "[Main] call ${call.method} with args ${call.arguments} from window $fromWindowId");
+            "[Main] call ${call.method} with args ${call.arguments} from window $fromWindowId");
       }
       if (call.method == kWindowMainWindowOnTop) {
         windowOnTop(null);
@@ -817,9 +969,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           connToken: call.arguments['connToken'],
         );
       } else if (call.method == kWindowBumpMouse) {
-        return RdPlatformChannel.instance.bumpMouse(
-          dx: call.arguments['dx'],
-          dy: call.arguments['dy']);
+        return RdPlatformChannel.instance
+            .bumpMouse(dx: call.arguments['dx'], dy: call.arguments['dy']);
       } else if (call.method == kWindowEventMoveTabToNewWindow) {
         final args = call.arguments.split(',');
         int? windowId;
@@ -883,6 +1034,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   @override
   void dispose() {
     _uniLinksSubscription?.cancel();
+    _cyberdeskApiKeyController.dispose();
     Get.delete<RxBool>(tag: 'stop-service');
     _updateTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);

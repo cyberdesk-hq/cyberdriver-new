@@ -104,6 +104,8 @@ class CyberdeskOrganization {
 
 class PeerPayload {
   String id = '';
+  String machineId = '';
+  String machineName = '';
   Map<String, dynamic> info = {};
   int? status;
   String user = '';
@@ -113,6 +115,9 @@ class PeerPayload {
 
   PeerPayload.fromJson(Map<String, dynamic> json)
       : id = json['id'] ?? '',
+        machineId = json['machine_id'] ?? json['cyberdesk_machine_id'] ?? '',
+        machineName =
+            json['machine_name'] ?? json['cyberdesk_machine_name'] ?? '',
         info = (json['info'] is Map<String, dynamic>) ? json['info'] : {},
         status = json['status'],
         user = json['user'] ?? '',
@@ -121,12 +126,21 @@ class PeerPayload {
         note = json['note'] ?? '';
 
   static Peer toPeer(PeerPayload p) {
+    final infoMachineId = p.info['machine_id']?.toString() ?? '';
+    final infoMachineName = p.info['machine_name']?.toString() ?? '';
+    final machineId = p.machineId.isNotEmpty ? p.machineId : infoMachineId;
+    final machineName =
+        p.machineName.isNotEmpty ? p.machineName : infoMachineName;
+    final displayName = machineName.isNotEmpty ? machineName : machineId;
     return Peer.fromJson({
       "id": p.id,
+      "machine_id": machineId,
+      "machine_name": machineName,
       'loginName': p.user_name,
       "username": p.info['username'] ?? '',
       "platform": _platform(p.info['os']),
       "hostname": p.info['device_name'],
+      "alias": displayName,
       "device_group_name": p.device_group_name,
       "note": p.note,
     });

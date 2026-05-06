@@ -17,6 +17,10 @@ cert.pfx
 *png
 *svg
 *jpg
+!branding/icons/*.png
+!branding/icons/*.svg
+!branding/icons/*.ico
+!branding/icons/*.icns
 sciter.dll
 **pdb
 src/bridge_generated.rs

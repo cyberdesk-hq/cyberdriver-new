@@ -52,6 +52,8 @@ use crate::keyboard;
 use crate::{client::Data, client::Interface};
 
 const CHANGE_RESOLUTION_VALID_TIMEOUT_SECS: u64 = 15;
+const CYBERDESK_DEFAULT_WINDOWS_WIDTH: i32 = 1024;
+const CYBERDESK_DEFAULT_WINDOWS_HEIGHT: i32 = 768;
 
 #[derive(Clone, Default)]
 pub struct Session<T: InvokeUiSession> {
@@ -1543,11 +1545,24 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     #[inline]
-    fn try_change_init_resolution(&self, display: i32) {
-        let Some((w, h)) = self.lc.read().unwrap().get_custom_resolution(display) else {
+    fn try_change_init_resolution(&self, display: i32, pi: &PeerInfo) {
+        if let Some((w, h)) = self.lc.read().unwrap().get_custom_resolution(display) {
+            self.change_resolution(display, w, h);
             return;
-        };
-        self.change_resolution(display, w, h);
+        }
+        if pi.platform != "Windows" {
+            return;
+        }
+        if pi.resolutions.resolutions.iter().any(|r| {
+            r.width == CYBERDESK_DEFAULT_WINDOWS_WIDTH
+                && r.height == CYBERDESK_DEFAULT_WINDOWS_HEIGHT
+        }) {
+            self.change_resolution(
+                display,
+                CYBERDESK_DEFAULT_WINDOWS_WIDTH,
+                CYBERDESK_DEFAULT_WINDOWS_HEIGHT,
+            );
+        }
     }
 
     fn do_change_resolution(&self, display: i32, width: i32, height: i32) {
@@ -1796,7 +1811,7 @@ impl<T: InvokeUiSession> Interface for Session<T> {
                 self.msgbox("error", "Error", msg, "");
                 return;
             }
-            self.try_change_init_resolution(pi.current_display);
+            self.try_change_init_resolution(pi.current_display, &pi);
             let p = self.lc.read().unwrap().should_auto_login();
             if !p.is_empty() {
                 input_os_password(p, true, self.clone());

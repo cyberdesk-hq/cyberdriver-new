@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:back_button_interceptor/back_button_interceptor.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -2486,7 +2485,8 @@ connectMainDesktop(String id,
     bool? forceRelay,
     String? password,
     String? connToken,
-    bool? isSharedPassword}) async {
+    bool? isSharedPassword,
+    String? tabLabel}) async {
   if (isFileTransfer) {
     await rustDeskWinManager.newFileTransfer(id,
         password: password,
@@ -2515,7 +2515,8 @@ connectMainDesktop(String id,
     await rustDeskWinManager.newRemoteDesktop(id,
         password: password,
         isSharedPassword: isSharedPassword,
-        forceRelay: forceRelay);
+        forceRelay: forceRelay,
+        tabLabel: tabLabel);
   }
 }
 
@@ -2533,7 +2534,8 @@ connect(BuildContext context, String id,
     bool forceRelay = false,
     String? password,
     String? connToken,
-    bool? isSharedPassword}) async {
+    bool? isSharedPassword,
+    String? tabLabel}) async {
   if (id == '') return;
   if (!isDesktop || desktopType == DesktopType.main) {
     try {
@@ -2566,6 +2568,7 @@ connect(BuildContext context, String id,
         password: password,
         isSharedPassword: isSharedPassword,
         forceRelay: forceRelay,
+        tabLabel: tabLabel,
       );
     } else {
       await rustDeskWinManager.call(WindowType.Main, kWindowConnect, {

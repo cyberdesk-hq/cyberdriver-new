@@ -70,6 +70,16 @@ fn primary_dimensions() -> Result<(usize, usize)> {
 #[cfg(not(windows))]
 fn primary_dimensions() -> Result<(usize, usize)> {
     let display = primary_display()?;
+    #[cfg(target_os = "macos")]
+    {
+        let scale = display.scale();
+        if scale > 1.0 {
+            return Ok((
+                (display.width() as f64 / scale).round() as usize,
+                (display.height() as f64 / scale).round() as usize,
+            ));
+        }
+    }
     Ok((display.width(), display.height()))
 }
 

@@ -177,6 +177,8 @@ class _ConnectionPageState extends State<ConnectionPage> {
                           tags: [],
                           hash: '',
                           password: '',
+                          cyberdeskMachineId: '',
+                          cyberdeskMachineName: '',
                           forceAlwaysRelay: false,
                           rdpPort: '',
                           rdpUsername: '',

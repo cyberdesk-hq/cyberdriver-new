@@ -1588,8 +1588,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
         key == CyberdeskBranding.prodHbbsPubkey) {
       return 'production';
     }
-    final stored =
-        bind.mainGetLocalOption(key: 'cyberdesk_environment').trim();
+    final stored = bind.mainGetLocalOption(key: 'cyberdesk_environment').trim();
     if (stored == 'custom') {
       return stored;
     }
@@ -1608,8 +1607,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
       await bind.mainSetOption(
           key: 'key', value: CyberdeskBranding.devHbbsPubkey);
       await bind.mainSetLocalOption(
-          key: 'cyberdesk_api_base',
-          value: CyberdeskBranding.devTunnelApiBase);
+          key: 'cyberdesk_api_base', value: CyberdeskBranding.devTunnelApiBase);
     } else if (value == 'production') {
       await bind.mainSetOption(
           key: 'custom-rendezvous-server',
@@ -1781,8 +1779,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                         hintText: cyberdeskApiKeyConfigured
                             ? translate('API key is configured')
                             : 'ak_...',
-                        helperText:
-                            translate(CyberdeskBranding.apiKeyHelpText),
+                        helperText: translate(CyberdeskBranding.apiKeyHelpText),
                         suffixIcon: IconButton(
                           icon: Icon(_cyberdeskApiKeyObscured
                               ? Icons.visibility_outlined
@@ -1807,19 +1804,23 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                               : () async {
                                   final value =
                                       _cyberdeskApiKeyController.text.trim();
+                                  if (value.isEmpty &&
+                                      !cyberdeskApiKeyConfigured) {
+                                    return;
+                                  }
                                   if (value.isNotEmpty) {
                                     final saved = await bind.mainSetLocalOption(
-                                        key: 'cyberdesk_api_key',
-                                        value: value);
+                                        key: 'cyberdesk_api_key', value: value);
                                     if (!saved) {
                                       showToast(translate('Failed'));
                                       return;
                                     }
                                     _cyberdeskApiKeyController.clear();
-                                    setState(() {});
                                   }
+                                  await start_service(true);
+                                  setState(() {});
                                 },
-                          child: Text(translate('Save')),
+                          child: const Text('Save and connect'),
                         ),
                         const SizedBox(width: 8),
                         OutlinedButton(
@@ -2286,9 +2287,8 @@ class _AccountState extends State<_Account> {
                             items: gFFI.userModel.organizations
                                 .map((org) => DropdownMenuItem<String>(
                                       value: org.id,
-                                      child: Text(org.name.isEmpty
-                                          ? org.id
-                                          : org.name),
+                                      child: Text(
+                                          org.name.isEmpty ? org.id : org.name),
                                     ))
                                 .toList(),
                           ),
