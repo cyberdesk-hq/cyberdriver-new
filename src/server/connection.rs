@@ -2439,9 +2439,6 @@ impl Connection {
                 }
             }
 
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-            self.try_start_cm_ipc();
-
             let cyberdesk_authorized = self.validate_cyberdesk_connection_token(&cyberdesk_lr).await;
             if cyberdesk_authorized {
                 #[cfg(target_os = "linux")]
@@ -2452,6 +2449,9 @@ impl Connection {
                 self.try_start_cm(lr.my_id, lr.my_name, self.authorized);
                 return true;
             }
+
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            self.try_start_cm_ipc();
 
             #[cfg(not(target_os = "linux"))]
             let err_msg = "".to_owned();
