@@ -2231,6 +2231,92 @@ impl Connection {
         self.video_ack_required = lr.video_ack_required;
     }
 
+    #[cfg(feature = "cyberdesk")]
+    async fn validate_cyberdesk_connection_token(&self, lr: &LoginRequest) -> bool {
+        let Some(payload) = lr.avatar.strip_prefix("cyberdesk_auth:") else {
+            return false;
+        };
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(payload) else {
+            log::warn!("Cyberdesk connection token payload is invalid JSON");
+            return false;
+        };
+        let desktop_token = payload
+            .get("desktop_token")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .trim();
+        if desktop_token.is_empty() {
+            return false;
+        }
+        let selected_organization_id = payload
+            .get("selected_organization_id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .trim();
+        let Some(machine_api_key) = crate::cyberdesk_tunnel::configured_api_key() else {
+            log::warn!("Cyberdesk connection token present but machine API key is not configured");
+            return false;
+        };
+        let mut api_server = Config::get_option("api-server");
+        if api_server.is_empty() {
+            api_server = crate::cyberdesk_branding::API_SERVER.to_owned();
+        }
+        if api_server.is_empty() {
+            log::warn!("Cyberdesk connection token present but API server is not configured");
+            return false;
+        }
+        let client = reqwest::Client::new();
+        let response = client
+            .post(format!(
+                "{}/api/cyberdriver/authorize-connection",
+                api_server.trim_end_matches('/')
+            ))
+            .json(&serde_json::json!({
+                "desktopToken": desktop_token,
+                "machineApiKey": machine_api_key,
+                "selectedOrganizationId": selected_organization_id,
+            }))
+            .send()
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(err) => {
+                log::warn!("Cyberdesk connection authorization request failed: {err}");
+                return false;
+            }
+        };
+        let status = response.status();
+        let body = match response.json::<serde_json::Value>().await {
+            Ok(body) => body,
+            Err(err) => {
+                log::warn!("Cyberdesk connection authorization response decode failed: {err}");
+                return false;
+            }
+        };
+        let allowed = body
+            .get("allowed")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if allowed {
+            log::info!(
+                "Cyberdesk same-org connection authorized for {}",
+                body.get("organization_id").and_then(|value| value.as_str()).unwrap_or("")
+            );
+            return true;
+        }
+        log::warn!(
+            "Cyberdesk connection authorization denied status={} reason={}",
+            status,
+            body.get("reason").and_then(|value| value.as_str()).unwrap_or("unknown")
+        );
+        false
+    }
+
+    #[cfg(not(feature = "cyberdesk"))]
+    async fn validate_cyberdesk_connection_token(&self, _lr: &LoginRequest) -> bool {
+        false
+    }
+
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn try_start_cm_ipc(&mut self) {
         if let Some(p) = self.start_cm_ipc_para.take() {
@@ -2281,6 +2367,7 @@ impl Connection {
             if self.authorized {
                 return true;
             }
+            let cyberdesk_lr = lr.clone();
             match lr.union {
                 Some(login_request::Union::FileTransfer(ft)) => {
                     if !Self::permission(
@@ -2369,6 +2456,17 @@ impl Connection {
 
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             self.try_start_cm_ipc();
+
+            let cyberdesk_authorized = self.validate_cyberdesk_connection_token(&cyberdesk_lr).await;
+            if cyberdesk_authorized {
+                #[cfg(target_os = "linux")]
+                self.linux_headless_handle.wait_desktop_cm_ready().await;
+                if !self.send_logon_response_and_keep_alive().await {
+                    return false;
+                }
+                self.try_start_cm(lr.my_id, lr.my_name, self.authorized);
+                return true;
+            }
 
             #[cfg(not(target_os = "linux"))]
             let err_msg = "".to_owned();

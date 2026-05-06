@@ -127,6 +127,7 @@ class PeerPayload {
       "username": p.info['username'] ?? '',
       "platform": _platform(p.info['os']),
       "hostname": p.info['device_name'],
+      "forceAlwaysRelay": p.info['forceAlwaysRelay'] ?? 'false',
       "device_group_name": p.device_group_name,
       "note": p.note,
     });

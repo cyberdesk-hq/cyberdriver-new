@@ -714,6 +714,13 @@ impl Client {
         let mut direct = !conn.is_err();
         if interface.is_force_relay() || conn.is_err() {
             if !relay_server.is_empty() {
+                log::info!(
+                    "requesting relay for peer {} via {} (force_relay={}, direct_err={})",
+                    peer_id,
+                    relay_server,
+                    interface.is_force_relay(),
+                    conn.is_err()
+                );
                 conn = Self::request_relay(
                     peer_id,
                     relay_server.to_owned(),
@@ -1852,6 +1859,14 @@ impl LoginConfigHandler {
                 || force_relay
                 || use_ws()
                 || Config::is_proxy();
+        log::info!(
+            "connection init id={} conn_type={:?} force_relay_arg={} saved_force_relay={} resolved_force_relay={}",
+            self.id,
+            self.conn_type,
+            force_relay,
+            self.get_option("force-always-relay"),
+            self.force_relay
+        );
         if let Some((real_id, server, key)) = &self.other_server {
             let other_server_key = self.get_option("other-server-key");
             if !other_server_key.is_empty() && key.is_empty() {
@@ -2642,6 +2657,18 @@ impl LoginConfigHandler {
             .unwrap_or_default();
         }
         avatar = resolve_avatar_url(avatar);
+        let cyberdesk_token = LocalConfig::get_option("access_token");
+        if !cyberdesk_token.is_empty() {
+            avatar = format!(
+                "cyberdesk_auth:{}",
+                serde_json::json!({
+                    "desktop_token": cyberdesk_token,
+                    "selected_organization_id": LocalConfig::get_option(
+                        "cyberdesk_selected_organization_id"
+                    ),
+                })
+            );
+        }
         let mut display_name = get_builtin_option(keys::OPTION_DISPLAY_NAME);
         if display_name.is_empty() {
             display_name =

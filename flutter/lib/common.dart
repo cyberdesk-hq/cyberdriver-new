@@ -2550,7 +2550,9 @@ connect(BuildContext context, String id,
   id = id.replaceAll(' ', '');
   final oldId = id;
   id = await bind.mainHandleRelayId(id: id);
-  forceRelay = id != oldId || forceRelay;
+  final savedForceRelay = option2bool(kOptionForceAlwaysRelay,
+      bind.mainGetPeerOptionSync(id: id, key: kOptionForceAlwaysRelay));
+  forceRelay = id != oldId || forceRelay || savedForceRelay;
   assert(!(isFileTransfer && isTcpTunneling && isRDP),
       "more than one connect type");
 

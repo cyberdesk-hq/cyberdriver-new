@@ -166,15 +166,20 @@ class UserModel {
 
   Future<void> switchOrganization(String organizationId) async {
     if (organizationId == selectedOrganizationId.value) return;
+    selectedOrganizationId.value = organizationId;
+    selectedOrganizationId.refresh();
     await bind.mainSetLocalOption(
         key: 'cyberdesk_selected_organization_id', value: organizationId);
-    selectedOrganizationId.value = organizationId;
     final userInfo = getLocalUserInfo();
     if (userInfo != null) {
       userInfo['selected_organization_id'] = organizationId;
       await bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(userInfo));
     }
-    await updateOtherModels();
+    // Org-scoped lists are cached locally; clear before refetching so the UI
+    // cannot keep showing stale peers from the previous organization.
+    await gFFI.abModel.reset();
+    await gFFI.groupModel.reset();
+    await refreshCurrentUser();
   }
 
   // update ab and group status

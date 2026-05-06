@@ -2260,16 +2260,27 @@ class _AccountState extends State<_Account> {
                         ),
                         if (gFFI.userModel.organizations.length > 1) ...[
                           const SizedBox(height: 10),
+                          Text(
+                            'Organization',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color:
+                                  Theme.of(context).textTheme.bodySmall?.color,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
                           DropdownButton<String>(
-                            value: gFFI.userModel.selectedOrganizationId.value
-                                    .isNotEmpty
-                                ? gFFI.userModel.selectedOrganizationId.value
-                                : gFFI.userModel.organizations.first.id,
+                            key: ValueKey(
+                                gFFI.userModel.selectedOrganizationId.value),
+                            value: _selectedOrganizationDropdownValue(),
                             isDense: true,
                             underline: const SizedBox.shrink(),
                             onChanged: (value) async {
                               if (value != null) {
                                 await gFFI.userModel.switchOrganization(value);
+                                if (mounted) {
+                                  setState(() {});
+                                }
                               }
                             },
                             items: gFFI.userModel.organizations
@@ -2290,6 +2301,15 @@ class _AccountState extends State<_Account> {
             }),
           ),
         )).marginOnly(left: 18, top: 16);
+  }
+
+  String _selectedOrganizationDropdownValue() {
+    final organizations = gFFI.userModel.organizations;
+    final selected = gFFI.userModel.selectedOrganizationId.value;
+    if (selected.isNotEmpty && organizations.any((org) => org.id == selected)) {
+      return selected;
+    }
+    return organizations.first.id;
   }
 
   Widget? _buildUserAvatar() {
