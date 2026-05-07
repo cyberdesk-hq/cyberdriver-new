@@ -33,6 +33,7 @@ mod shell;
 
 const API_KEY_ENC_VERSION: &str = "00";
 const API_KEY_MAX_LEN: usize = 4096;
+pub const REMOTE_KEEPALIVE_FOR_OPTION: &str = "cyberdesk_remote_keepalive_for";
 
 fn path_without_query(path: &str) -> &str {
     path.split_once('?').map(|(path, _)| path).unwrap_or(path)
@@ -95,11 +96,13 @@ pub fn spawn_if_enabled() {
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
             let machine_name = crate::cyberdesk_cli::machine_name_from_env();
+            let remote_keepalive_for = configured_remote_keepalive_for();
             let result = client::run(
                 api_key.clone(),
                 api_base.clone(),
                 fingerprint.clone(),
                 machine_name,
+                remote_keepalive_for,
                 dispatch_semaphore.clone(),
             )
             .await;
@@ -252,6 +255,29 @@ pub(crate) fn configured_api_base() -> String {
 
 pub(crate) fn store_configured_api_base(api_base: String) {
     config::LocalConfig::set_option("cyberdesk_api_base".to_string(), api_base);
+}
+
+pub(crate) fn configured_remote_keepalive_for() -> Option<String> {
+    std::env::var("CYBERDESK_REMOTE_KEEPALIVE_FOR")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let value = config::LocalConfig::get_option(REMOTE_KEEPALIVE_FOR_OPTION);
+            let value = value.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        })
+}
+
+pub(crate) fn store_configured_remote_keepalive_for(machine_id: Option<String>) {
+    config::LocalConfig::set_option(
+        REMOTE_KEEPALIVE_FOR_OPTION.to_string(),
+        machine_id.unwrap_or_default(),
+    );
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

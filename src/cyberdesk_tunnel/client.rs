@@ -156,6 +156,7 @@ pub async fn run(
     api_base: String,
     fingerprint: String,
     machine_name: Option<String>,
+    remote_keepalive_for: Option<String>,
     dispatch_semaphore: Arc<Semaphore>,
 ) -> Result<()> {
     let url = format!("{}/tunnel/ws", api_base);
@@ -196,6 +197,13 @@ pub async fn run(
             "x-cyberdriver-name",
             HeaderValue::from_str(machine_name)
                 .map_err(|e| anyhow!("invalid X-Cyberdriver-Name header value: {e}"))?,
+        );
+    }
+    if let Some(remote_keepalive_for) = remote_keepalive_for.as_deref() {
+        headers.insert(
+            "x-remote-keepalive-for",
+            HeaderValue::from_str(remote_keepalive_for)
+                .map_err(|e| anyhow!("invalid X-Remote-Keepalive-For header value: {e}"))?,
         );
     }
 

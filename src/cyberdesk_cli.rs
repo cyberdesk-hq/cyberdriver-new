@@ -92,6 +92,8 @@ struct JoinCommand {
     environment: Option<crate::cyberdesk_branding::CyberdeskEnvironment>,
     api_base: Option<String>,
     allow_insecure_api_base: bool,
+    remote_keepalive_for: Option<String>,
+    keepalive_enabled: Option<bool>,
 }
 
 struct MsiConfigureCommand {
@@ -180,6 +182,16 @@ fn parse_join(args: &[String]) -> EarlyCommand {
         environment,
         api_base,
         allow_insecure_api_base,
+        remote_keepalive_for: option_value(args, "--register-as-keepalive-for")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        keepalive_enabled: if has_flag(args, "--keepalive") {
+            Some(true)
+        } else if has_flag(args, "--no-keepalive") {
+            Some(false)
+        } else {
+            None
+        },
     })
 }
 
@@ -276,6 +288,13 @@ fn run_join(join: JoinCommand) {
             );
         }
         crate::cyberdesk_tunnel::store_configured_api_base(api_base);
+    }
+    crate::cyberdesk_tunnel::store_configured_remote_keepalive_for(join.remote_keepalive_for);
+    if let Some(enabled) = join.keepalive_enabled {
+        hbb_common::config::LocalConfig::set_option(
+            "cyberdesk_keepalive_enabled".to_string(),
+            if enabled { "Y" } else { "N" }.to_string(),
+        );
     }
 
     match spawn_join_runtime() {
@@ -416,6 +435,7 @@ fn print_config() {
         "relay_server": hbb_common::config::Config::get_option("relay-server"),
         "fingerprint": crate::cyberdesk_tunnel::current_fingerprint(),
         "machine_name": machine_name_from_env(),
+        "remote_keepalive_for": crate::cyberdesk_tunnel::configured_remote_keepalive_for(),
         "config_path": crate::cyberdesk_tunnel::config_path().display().to_string(),
     });
     match serde_json::to_string_pretty(&value) {
@@ -548,7 +568,7 @@ fn print_help() {
         r#"Cyberdriver
 
 Usage:
-  cyberdriver join --secret <ak_*> [--name <name>] [--api-base <ws-or-http-base>] [--allow-insecure-api-base]
+  cyberdriver join --secret <ak_*> [--name <name>] [--keepalive] [--api-base <ws-or-http-base>] [--register-as-keepalive-for <machine-id>] [--allow-insecure-api-base]
   cyberdriver status
   cyberdriver health
   cyberdriver config-print
@@ -566,16 +586,22 @@ fn print_join_help() {
         r#"Cyberdriver join
 
 Usage:
-  cyberdriver join --secret <ak_*> [--name <name>] [--env prod|dev] [--api-base <ws-or-http-base>] [--allow-insecure-api-base]
+  cyberdriver join --secret <ak_*> [--name <name>] [--keepalive] [--env prod|dev] [--api-base <ws-or-http-base>] [--register-as-keepalive-for <machine-id>] [--allow-insecure-api-base]
 
 Options:
   --secret <ak_*>          Cyberdesk API key.
   --name <name>            Optional machine name sent as X-CYBERDRIVER-NAME.
                            Printable ASCII only, max 128 chars, not persisted.
+  --keepalive              Enable Cyberdesk keepalive. This is the default, but
+                           the flag is useful for explicit AMI/bootstrap scripts.
+  --no-keepalive           Disable Cyberdesk keepalive.
   --env <prod|dev>         Apply Cyberdesk environment preset for API, hbbs, hbbr, and key.
   --dev                    Shorthand for --env dev.
   --api-base <base>        Tunnel WebSocket base, e.g. ws://localhost:8080.
                            Also updates the desktop API server for GUI login.
+  --register-as-keepalive-for <machine-id>
+                           Register this host as the remote keepalive machine for
+                           the main Cyberdesk machine ID.
   --host <host>            Compatibility shorthand for wss://<host>.
   --allow-insecure-api-base
                            Allow ws:// or http:// for non-loopback dev targets
@@ -695,7 +721,10 @@ fn is_known_option(value: &str) -> bool {
             | "--name"
             | "--env"
             | "--dev"
+            | "--keepalive"
+            | "--no-keepalive"
             | "--api-base"
+            | "--register-as-keepalive-for"
             | "--host"
             | "--api-key"
             | "--stdin"

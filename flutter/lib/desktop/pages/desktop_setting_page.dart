@@ -1543,6 +1543,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   bool get wantKeepAlive => true;
   bool locked = !isWeb && bind.mainIsInstalled();
   final _cyberdeskApiKeyController = TextEditingController();
+  final _remoteKeepaliveForController = TextEditingController();
   bool _cyberdeskApiKeyObscured = true;
 
   final scrollController = ScrollController();
@@ -1550,6 +1551,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   @override
   void dispose() {
     _cyberdeskApiKeyController.dispose();
+    _remoteKeepaliveForController.dispose();
     scrollController.dispose();
     super.dispose();
   }
@@ -1747,6 +1749,12 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
         bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
     final keepaliveEnabled =
         bind.mainGetLocalOption(key: 'cyberdesk_keepalive_enabled') != 'N';
+    final remoteKeepaliveFor =
+        bind.mainGetLocalOption(key: 'cyberdesk_remote_keepalive_for').trim();
+    if (_remoteKeepaliveForController.text.isEmpty &&
+        remoteKeepaliveFor.isNotEmpty) {
+      _remoteKeepaliveForController.text = remoteKeepaliveFor;
+    }
     return _Card(
       title: 'Network',
       children: [
@@ -1886,6 +1894,56 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                               value: value ? 'Y' : 'N');
                           setState(() {});
                         },
+                ),
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: _remoteKeepaliveForController,
+                      enabled: !locked,
+                      decoration: InputDecoration(
+                        labelText: 'Remote keepalive for',
+                        hintText: 'Main Cyberdesk machine ID',
+                        helperText:
+                            'Use on a host machine to keep a linked VM session active.',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        OutlinedButton(
+                          onPressed: locked
+                              ? null
+                              : () async {
+                                  await bind.mainSetLocalOption(
+                                      key: 'cyberdesk_remote_keepalive_for',
+                                      value: _remoteKeepaliveForController.text
+                                          .trim());
+                                  showToast(translate('Saved'));
+                                  setState(() {});
+                                },
+                          child: Text(translate('Save')),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: locked || remoteKeepaliveFor.isEmpty
+                              ? null
+                              : () async {
+                                  await bind.mainSetLocalOption(
+                                      key: 'cyberdesk_remote_keepalive_for',
+                                      value: '');
+                                  _remoteKeepaliveForController.clear();
+                                  setState(() {});
+                                },
+                          child: Text(translate('Clear')),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
               divider,
