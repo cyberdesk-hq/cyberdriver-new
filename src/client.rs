@@ -3573,6 +3573,13 @@ async fn mint_cyberdesk_connection_token(lc: Arc<RwLock<LoginConfigHandler>>) ->
     if api_server.is_empty() {
         return String::new();
     }
+    if !cyberdesk_api_server_allows_auth(&api_server) {
+        log::warn!(
+            "Cyberdesk connection token request skipped: refusing to send bearer token over insecure non-loopback API server {}",
+            api_server
+        );
+        return String::new();
+    }
 
     let selected_organization_id = LocalConfig::get_option("cyberdesk_selected_organization_id");
     let response = reqwest::Client::new()
@@ -3612,6 +3619,23 @@ async fn mint_cyberdesk_connection_token(lc: Arc<RwLock<LoginConfigHandler>>) ->
         log::warn!("Cyberdesk connection token response did not include a token (HTTP {status})");
     }
     token
+}
+
+#[cfg(feature = "cyberdesk")]
+fn cyberdesk_api_server_allows_auth(api_server: &str) -> bool {
+    if api_server.starts_with("https://") {
+        return true;
+    }
+    if !api_server.starts_with("http://") {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(api_server) else {
+        return false;
+    };
+    matches!(
+        url.host_str().map(|host| host.trim_matches(['[', ']'])),
+        Some("localhost" | "127.0.0.1" | "::1")
+    )
 }
 
 #[cfg(not(feature = "cyberdesk"))]

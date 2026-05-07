@@ -122,6 +122,9 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(500, format!("diagnostics failed: {err:#}")),
         },
+        // Accepted product risk: these destructive controls are intentionally
+        // remotely callable through the authenticated Cyberdesk tunnel so the
+        // dashboard can recover/update unattended machines without local setup.
         ("POST", "/internal/shutdown") => match internal::shutdown(body) {
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(500, format!("shutdown failed: {err:#}")),

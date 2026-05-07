@@ -2250,6 +2250,13 @@ impl Connection {
             log::warn!("Cyberdesk connection token present but API server is not configured");
             return false;
         }
+        if !cyberdesk_api_server_allows_auth(&api_server) {
+            log::warn!(
+                "Cyberdesk connection authorization skipped: refusing to send machine API key over insecure non-loopback API server {}",
+                api_server
+            );
+            return false;
+        }
         let client = reqwest::Client::new();
         let response = client
             .post(format!(
@@ -2296,6 +2303,23 @@ impl Connection {
             body.get("reason").and_then(|value| value.as_str()).unwrap_or("unknown")
         );
         false
+    }
+
+    #[cfg(feature = "cyberdesk")]
+    fn cyberdesk_api_server_allows_auth(api_server: &str) -> bool {
+        if api_server.starts_with("https://") {
+            return true;
+        }
+        if !api_server.starts_with("http://") {
+            return false;
+        }
+        let Ok(url) = url::Url::parse(api_server) else {
+            return false;
+        };
+        matches!(
+            url.host_str().map(|host| host.trim_matches(['[', ']'])),
+            Some("localhost" | "127.0.0.1" | "::1")
+        )
     }
 
     #[cfg(not(feature = "cyberdesk"))]

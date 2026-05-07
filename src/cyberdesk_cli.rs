@@ -687,10 +687,15 @@ fn parse_environment(
 }
 
 fn api_server_from_tunnel_base(api_base: &str) -> Option<String> {
-    api_base
-        .strip_prefix("wss://")
-        .map(|rest| format!("https://{rest}"))
-        .or_else(|| api_base.strip_prefix("ws://").map(|rest| format!("http://{rest}")))
+    if let Some(rest) = api_base.strip_prefix("wss://") {
+        return Some(format!("https://{rest}"));
+    }
+    if api_base.starts_with("ws://") && is_loopback_api_base(api_base) {
+        return api_base
+            .strip_prefix("ws://")
+            .map(|rest| format!("http://{rest}"));
+    }
+    None
 }
 
 fn is_loopback_api_base(value: &str) -> bool {
@@ -867,6 +872,7 @@ mod tests {
             api_server_from_tunnel_base("ws://localhost:8080"),
             Some("http://localhost:8080".to_string())
         );
+        assert_eq!(api_server_from_tunnel_base("ws://100.66.79.97:8080"), None);
     }
 
     #[test]
