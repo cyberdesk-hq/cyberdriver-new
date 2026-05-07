@@ -1626,6 +1626,34 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
     setState(() {});
   }
 
+  Future<void> _copyCyberdeskDiagnostics() async {
+    final payload = {
+      'app': CyberdeskBranding.appName,
+      'api_key_configured':
+          bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty,
+      'api_base': bind.mainGetLocalOption(key: 'cyberdesk_api_base'),
+      'environment': bind.mainGetLocalOption(key: 'cyberdesk_environment'),
+      'desktop_api_server': bind.mainGetOptionSync(key: 'api-server'),
+      'rendezvous_server':
+          bind.mainGetOptionSync(key: 'custom-rendezvous-server'),
+      'relay_server': bind.mainGetOptionSync(key: 'relay-server'),
+      'rustdesk_peer_id': gFFI.serverModel.serverId.text,
+      'keepalive_enabled':
+          bind.mainGetLocalOption(key: 'cyberdesk_keepalive_enabled') != 'N',
+      'service_status': stateGlobal.svcStatus.value.toString(),
+      'macos_permissions': {
+        if (isMacOS)
+          'screen_recording': bind.mainIsCanScreenRecording(prompt: false),
+        if (isMacOS) 'accessibility': bind.mainIsProcessTrusted(prompt: false),
+        if (isMacOS)
+          'input_monitoring': bind.mainIsCanInputMonitoring(prompt: false),
+      },
+    };
+    await Clipboard.setData(ClipboardData(
+        text: const JsonEncoder.withIndent('  ').convert(payload)));
+    showToast(translate('Copied'));
+  }
+
   Widget network(BuildContext context) {
     final hideServer =
         bind.mainGetBuildinOption(key: kOptionHideServerSetting) == 'Y';
@@ -1717,6 +1745,8 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
     final divider = const Divider(height: 1, indent: 16, endIndent: 16);
     final cyberdeskApiKeyConfigured =
         bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
+    final keepaliveEnabled =
+        bind.mainGetLocalOption(key: 'cyberdesk_keepalive_enabled') != 'N';
     return _Card(
       title: 'Network',
       children: [
@@ -1837,6 +1867,38 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                       ],
                     ),
                   ],
+                ),
+              ),
+              divider,
+              listTile(
+                icon: Icons.favorite_border,
+                title: 'Cyberdesk keepalive',
+                showTooltip: true,
+                tooltipMessage:
+                    'Keeps this desktop lightly active when idle so long-running automation is less likely to be interrupted by screen locks or idle timers.',
+                trailing: Switch(
+                  value: keepaliveEnabled,
+                  onChanged: locked
+                      ? null
+                      : (value) async {
+                          await bind.mainSetLocalOption(
+                              key: 'cyberdesk_keepalive_enabled',
+                              value: value ? 'Y' : 'N');
+                          setState(() {});
+                        },
+                ),
+              ),
+              divider,
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: locked ? null : _copyCyberdeskDiagnostics,
+                    icon: const Icon(Icons.bug_report_outlined, size: 18),
+                    label: const Text('Copy diagnostics'),
+                  ),
                 ),
               ),
               if (!hideServer || !hideProxy || !hideWebSocket) divider,
