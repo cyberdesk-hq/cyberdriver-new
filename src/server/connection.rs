@@ -2257,7 +2257,16 @@ impl Connection {
             );
             return false;
         }
-        let client = reqwest::Client::new();
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(client) => client,
+            Err(err) => {
+                log::warn!("Cyberdesk connection authorization HTTP client setup failed: {err}");
+                return false;
+            }
+        };
         let response = client
             .post(format!(
                 "{}/api/cyberdriver/authorize-connection",

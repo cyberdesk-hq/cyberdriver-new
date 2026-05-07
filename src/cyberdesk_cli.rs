@@ -604,8 +604,8 @@ Options:
                            the main Cyberdesk machine ID.
   --host <host>            Compatibility shorthand for wss://<host>.
   --allow-insecure-api-base
-                           Allow ws:// or http:// for non-loopback dev targets
-                           such as Tailscale. Never use for production.
+                           Deprecated compatibility flag. Plaintext ws:// or
+                           http:// API bases are only allowed for loopback.
   -h, --help               Show this help.
 
 Security:
@@ -619,7 +619,7 @@ fn api_base_from_host(host: &str) -> String {
     format!("wss://{host}")
 }
 
-fn validate_api_base(raw: &str, allow_insecure_api_base: bool) -> Result<String, String> {
+fn validate_api_base(raw: &str, _allow_insecure_api_base: bool) -> Result<String, String> {
     let value = raw.trim();
     if value.is_empty() {
         return Err("error: --api-base must not be empty".to_string());
@@ -640,7 +640,7 @@ fn validate_api_base(raw: &str, allow_insecure_api_base: bool) -> Result<String,
     }
 
     if lower_value.starts_with("ws://") || lower_value.starts_with("http://") {
-        if is_loopback_api_base(value) || allow_insecure_api_base {
+        if is_loopback_api_base(value) {
             if lower_value.starts_with("http://") {
                 return Ok(format!(
                     "ws://{}",
@@ -653,7 +653,7 @@ fn validate_api_base(raw: &str, allow_insecure_api_base: bool) -> Result<String,
             ));
         }
         return Err(
-            "error: insecure --api-base is only allowed for localhost/loopback dev targets; use --allow-insecure-api-base or CYBERDESK_ALLOW_INSECURE_API_BASE=1 for explicit local dev testing"
+            "error: insecure --api-base is only allowed for localhost/loopback dev targets; use https:// or wss:// for dev/staging/prod"
                 .to_string(),
         );
     }
@@ -951,14 +951,8 @@ mod tests {
     }
 
     #[test]
-    fn validate_api_base_allows_explicit_insecure_dev_targets() {
-        assert_eq!(
-            validate_api_base("ws://100.66.79.97:8080", true),
-            Ok("ws://100.66.79.97:8080".to_string())
-        );
-        assert_eq!(
-            validate_api_base("http://10.0.0.10:8080", true),
-            Ok("ws://10.0.0.10:8080".to_string())
-        );
+    fn validate_api_base_rejects_explicit_insecure_non_loopback_targets() {
+        assert!(validate_api_base("ws://100.66.79.97:8080", true).is_err());
+        assert!(validate_api_base("http://10.0.0.10:8080", true).is_err());
     }
 }

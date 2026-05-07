@@ -3581,8 +3581,18 @@ async fn mint_cyberdesk_connection_token(lc: Arc<RwLock<LoginConfigHandler>>) ->
         return String::new();
     }
 
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => {
+            log::warn!("Cyberdesk connection token HTTP client setup failed: {err}");
+            return String::new();
+        }
+    };
     let selected_organization_id = LocalConfig::get_option("cyberdesk_selected_organization_id");
-    let response = reqwest::Client::new()
+    let response = client
         .post(format!(
             "{}/api/cyberdriver/connection-token",
             api_server.trim_end_matches('/')
