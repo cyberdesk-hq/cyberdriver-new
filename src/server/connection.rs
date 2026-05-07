@@ -2466,6 +2466,10 @@ impl Connection {
 
             let cyberdesk_authorized = self.validate_cyberdesk_connection_token(&cyberdesk_lr).await;
             if cyberdesk_authorized {
+                // Accepted product risk: Cyberdesk org-scoped authorization is
+                // intended to replace RustDesk's local password/click-approve
+                // gate for Cyberdesk-managed peers. Route-level permissions,
+                // privacy mode, and 2FA still run through the normal paths.
                 #[cfg(target_os = "linux")]
                 self.linux_headless_handle.wait_desktop_cm_ready().await;
                 if !self.send_logon_response_and_keep_alive().await {
