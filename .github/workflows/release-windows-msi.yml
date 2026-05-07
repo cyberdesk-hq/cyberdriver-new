@@ -31,28 +31,28 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
 
       - name: Restore bridge files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: bridge-artifact
           path: ./
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
 
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v1
+        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
         with:
           version: ${{ env.LLVM_VERSION }}
 
       - name: Install Flutter
-        uses: subosito/flutter-action@v2.12.0
+        uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225
         with:
           channel: "stable"
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -82,18 +82,18 @@ jobs:
           fi
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           prefix-key: windows-msi
 
       - name: Set up vcpkg
-        uses: lukka/run-vcpkg@v11
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
         with:
           vcpkgDirectory: C:\vcpkg
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
@@ -114,7 +114,7 @@ jobs:
           fi
 
       - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce
 
       - name: Read Cyberdriver version
         id: version
@@ -158,13 +158,13 @@ jobs:
           Get-FileHash "SignOutput\Cyberdriver-${{ steps.version.outputs.version }}-windows-x64.msi" -Algorithm SHA256
 
       - name: Upload MSI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cyberdriver-windows-msi
           path: SignOutput/Cyberdriver-*-windows-x64.msi
 
       - name: Publish test release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
