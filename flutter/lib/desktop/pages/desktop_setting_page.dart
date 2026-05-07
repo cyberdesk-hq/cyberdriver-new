@@ -1957,7 +1957,8 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                         ),
                         const SizedBox(width: 8),
                         OutlinedButton(
-                          onPressed: locked || remoteKeepaliveFor.isEmpty
+                          onPressed: locked ||
+                                  _remoteKeepaliveForController.text.trim().isEmpty
                               ? null
                               : () async {
                                   await bind.mainSetLocalOption(
