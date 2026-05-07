@@ -110,21 +110,6 @@ pub fn keepalive_enabled() -> bool {
         && LocalConfig::get_option(KEEPALIVE_ENABLED_OPTION) != "N"
 }
 
-pub fn shutdown_enabled() -> bool {
-    internal_action_enabled("CYBERDESK_ENABLE_INTERNAL_SHUTDOWN")
-}
-
-pub fn update_enabled() -> bool {
-    internal_action_enabled("CYBERDESK_ENABLE_INTERNAL_UPDATE")
-}
-
-fn internal_action_enabled(env_key: &str) -> bool {
-    matches!(
-        std::env::var(env_key),
-        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
-    )
-}
-
 pub fn spawn_keepalive_loop() {
     if KEEPALIVE_LOOP_STARTED.swap(true, Ordering::SeqCst) {
         return;
