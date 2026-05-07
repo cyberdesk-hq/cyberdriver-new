@@ -2582,6 +2582,7 @@ connect(BuildContext context, String id,
         'isSharedPassword': isSharedPassword,
         'forceRelay': forceRelay,
         'connToken': connToken,
+        'tabLabel': tabLabel,
       });
     }
   } else {

@@ -12,6 +12,7 @@ import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../common.dart';
 import '../../common/widgets/peer_card.dart';
@@ -192,7 +193,45 @@ class ConnectionPage extends StatefulWidget {
 }
 
 /// State for the connection page.
-class _ConnectionPageState extends State<ConnectionPage> {
+class _ConnectionPageState extends State<ConnectionPage> with WindowListener {
+  @override
+  void initState() {
+    windowManager.addListener(this);
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowClose() {
+    bind.mainOnMainWindowClose();
+    super.onWindowClose();
+  }
+
+  @override
+  void onWindowEnterFullScreen() {
+    stateGlobal.resizeEdgeSize.value = 0;
+    super.onWindowEnterFullScreen();
+  }
+
+  @override
+  void onWindowLeaveFullScreen() {
+    stateGlobal.refreshResizeEdgeSize();
+    super.onWindowLeaveFullScreen();
+  }
+
+  @override
+  void onWindowEvent(String eventName) {
+    if (isWindows && (eventName == 'minimize' || eventName == 'restore')) {
+      Get.forceAppUpdate();
+    }
+    super.onWindowEvent(eventName);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isOutgoingOnly = bind.isOutgoingOnly();
