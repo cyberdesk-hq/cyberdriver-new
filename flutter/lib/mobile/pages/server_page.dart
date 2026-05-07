@@ -263,7 +263,7 @@ class ServiceNotRunningNotification extends StatelessWidget {
                     serverModel.toggleService();
                   }
                 },
-                label: Text(translate(CyberdeskBranding.enableServiceLabel)))
+                label: Text(CyberdeskBranding.enableServiceLabel))
           ],
         ));
   }

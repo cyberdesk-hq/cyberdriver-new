@@ -69,7 +69,7 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
                   onTap: () async {
                     await start_service(true);
                   },
-                  child: Text(translate(CyberdeskBranding.enableServiceLabel),
+                  child: Text(CyberdeskBranding.enableServiceLabel,
                       style: TextStyle(
                           decoration: TextDecoration.underline, fontSize: em)))
               .marginOnly(left: em),
