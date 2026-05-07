@@ -2260,6 +2260,7 @@ impl Connection {
                 "desktopToken": desktop_token,
                 "machineApiKey": machine_api_key,
                 "selectedOrganizationId": selected_organization_id,
+                "rustdeskPeerId": Config::get_id(),
             }))
             .send()
             .await;
