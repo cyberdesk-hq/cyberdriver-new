@@ -22,7 +22,7 @@ pub const APP_COMPANY: &str = "Cyberdesk Inc.";
 pub const SUPPORT_URL: &str = "https://cyberdesk.io/support";
 pub const AGPL_SOURCE_URL_CLIENT: &str = "https://github.com/cyberdesk-hq/cyberdriver-new";
 pub const AGPL_SOURCE_URL_SERVER: &str = "https://github.com/cyberdesk-hq/cyberdriver-server";
-pub const URL_SCHEME: &str = "cyberdesk";
+pub const URL_SCHEME: &str = "cyberdriver";
 
 // Network defaults — overridable at runtime via Settings UI (M7).
 //

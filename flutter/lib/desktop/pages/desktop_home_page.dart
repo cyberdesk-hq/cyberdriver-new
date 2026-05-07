@@ -421,9 +421,30 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final cyberdeskApiKeyConfigured =
         bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
     final editingApiKey = _cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured;
-    final status = !cyberdeskApiKeyConfigured
-        ? CyberdeskBranding.tunnelDisabled
-        : CyberdeskBranding.tunnelConnected;
+    bool tunnelReady() =>
+        !svcStopped.value && stateGlobal.svcStatus.value == SvcStatus.ready;
+    String tunnelStatus() {
+      final ready = tunnelReady();
+      return !cyberdeskApiKeyConfigured
+          ? CyberdeskBranding.tunnelDisabled
+          : ready
+              ? CyberdeskBranding.tunnelConnected
+              : CyberdeskBranding.tunnelDisconnected;
+    }
+
+    Widget tunnelIcon() {
+      final ready = tunnelReady();
+      return Icon(
+        ready && cyberdeskApiKeyConfigured
+            ? Icons.cloud_done_outlined
+            : Icons.cloud_off_outlined,
+        color: ready && cyberdeskApiKeyConfigured
+            ? MyTheme.accent
+            : Theme.of(context).disabledColor,
+        size: 20,
+      );
+    }
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       padding: const EdgeInsets.all(12),
@@ -437,8 +458,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         children: [
           Row(
             children: [
-              const Icon(Icons.cloud_done_outlined,
-                  color: MyTheme.accent, size: 20),
+              Obx(() => tunnelIcon()),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -448,10 +468,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               ),
             ],
           ),
-          Text(
-            status,
-            style: Theme.of(context).textTheme.bodySmall,
-          ).marginOnly(top: 4, bottom: 10),
+          Obx(() => Text(
+                tunnelStatus(),
+                style: Theme.of(context).textTheme.bodySmall,
+              )).marginOnly(top: 4, bottom: 10),
           if (editingApiKey)
             TextField(
               controller: _cyberdeskApiKeyController,

@@ -338,9 +338,12 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
     if (_searchText.isEmpty) {
       return true;
     }
+    final displayName = peer.cyberdeskDisplayName.toLowerCase();
     final machineName = peer.cyberdeskMachineName.toLowerCase();
     final machineId = peer.cyberdeskMachineId.toLowerCase();
-    return machineName.contains(_searchText) || machineId.contains(_searchText);
+    return displayName.contains(_searchText) ||
+        machineName.contains(_searchText) ||
+        machineId.contains(_searchText);
   }
 
   @override

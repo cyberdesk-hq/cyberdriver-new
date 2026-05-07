@@ -4,7 +4,7 @@
   "support_url": "https://cyberdesk.io/support",
   "agpl_source_url_client": "https://github.com/cyberdesk-hq/cyberdriver-new",
   "agpl_source_url_server": "https://github.com/cyberdesk-hq/cyberdriver-server",
-  "url_scheme": "cyberdesk",
+  "url_scheme": "cyberdriver",
   "rendezvous_server_default": "hbbs.cyberdesk.io",
   "relay_server_default": "hbbr.cyberdesk.io",
   "api_server_default": "https://api.cyberdesk.io",

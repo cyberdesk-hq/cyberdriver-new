@@ -14,7 +14,7 @@ class CyberdeskBranding {
       'https://github.com/cyberdesk-hq/cyberdriver-new';
   static const String agplSourceUrlServer =
       'https://github.com/cyberdesk-hq/cyberdriver-server';
-  static const String urlScheme = 'cyberdesk';
+  static const String urlScheme = 'cyberdriver';
   static const String prodRendezvousServer = 'hbbs.cyberdesk.io';
   static const String prodRelayServer = 'hbbr.cyberdesk.io';
   static const String prodApiServer = 'https://api.cyberdesk.io';
