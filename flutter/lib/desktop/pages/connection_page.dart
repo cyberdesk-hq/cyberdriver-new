@@ -194,6 +194,8 @@ class ConnectionPage extends StatefulWidget {
 
 /// State for the connection page.
 class _ConnectionPageState extends State<ConnectionPage> with WindowListener {
+  bool _isWindowMinimized = false;
+
   @override
   void initState() {
     windowManager.addListener(this);
@@ -226,8 +228,14 @@ class _ConnectionPageState extends State<ConnectionPage> with WindowListener {
 
   @override
   void onWindowEvent(String eventName) {
-    if (isWindows && (eventName == 'minimize' || eventName == 'restore')) {
-      Get.forceAppUpdate();
+    if (isWindows) {
+      if (eventName == 'minimize') {
+        _isWindowMinimized = true;
+      } else if (_isWindowMinimized &&
+          (eventName == 'restore' || eventName == 'maximize')) {
+        _isWindowMinimized = false;
+        Get.forceAppUpdate();
+      }
     }
     super.onWindowEvent(eventName);
   }

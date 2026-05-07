@@ -277,6 +277,7 @@ class RustDeskMultiWindowManager {
     bool? isSharedPassword,
     String? switchUuid,
     bool? forceRelay,
+    String? connToken,
     String? tabLabel,
   }) async {
     return await newSession(
@@ -288,6 +289,7 @@ class RustDeskMultiWindowManager {
       forceRelay: forceRelay,
       switchUuid: switchUuid,
       isSharedPassword: isSharedPassword,
+      connToken: connToken,
       tabLabel: tabLabel,
     );
   }

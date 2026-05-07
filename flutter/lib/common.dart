@@ -1619,6 +1619,12 @@ mainSetLocalBoolOption(String key, bool value) async {
   await bind.mainSetLocalOption(key: key, value: v);
 }
 
+Future<bool> mainSetLocalOption(String key, String value) async {
+  final result =
+      await (bind.mainSetLocalOption(key: key, value: value) as dynamic);
+  return result is bool ? result : true;
+}
+
 bool mainGetLocalBoolOptionSync(String key) {
   return option2bool(key, bind.mainGetLocalOption(key: key));
 }
@@ -2515,6 +2521,7 @@ connectMainDesktop(String id,
     await rustDeskWinManager.newRemoteDesktop(id,
         password: password,
         isSharedPassword: isSharedPassword,
+        connToken: connToken,
         forceRelay: forceRelay,
         tabLabel: tabLabel);
   }

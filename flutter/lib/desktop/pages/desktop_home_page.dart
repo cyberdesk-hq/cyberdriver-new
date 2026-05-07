@@ -591,8 +591,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       _cyberdeskApiKeySaving = true;
     });
     try {
-      final saved =
-          await bind.mainSetLocalOption(key: 'cyberdesk_api_key', value: value);
+      final saved = await mainSetLocalOption('cyberdesk_api_key', value);
       if (!saved) {
         showToast(translate('Failed'));
         return;
