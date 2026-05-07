@@ -1620,9 +1620,7 @@ mainSetLocalBoolOption(String key, bool value) async {
 }
 
 Future<bool> mainSetLocalOption(String key, String value) async {
-  final result =
-      await (bind.mainSetLocalOption(key: key, value: value) as dynamic);
-  return result is bool ? result : true;
+  return await bind.mainSetLocalOption(key: key, value: value);
 }
 
 bool mainGetLocalBoolOptionSync(String key) {
