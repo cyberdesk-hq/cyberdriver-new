@@ -21,6 +21,12 @@ class CyberdeskBranding {
   static const String prodTunnelApiBase = 'wss://api.cyberdesk.io';
   static const String prodHbbsPubkey =
       'zhJ/30tgM6fCP+cJro8DjPN2WnswhMiowPkehilsMYc=';
+  static const String devRendezvousServer = 'hbbs-dev.cyberdesk.io';
+  static const String devRelayServer = 'hbbr-dev.cyberdesk.io';
+  static const String devApiServer = 'https://cyberdesk-api-dev.fly.dev';
+  static const String devTunnelApiBase = 'wss://cyberdesk-api-dev.fly.dev';
+  static const String devHbbsPubkey =
+      'EHHHwBfzjJasItIOwAJAI60Jj64uJu4rpI1cdE4ulhI=';
   static const String apiServerDefault = prodApiServer;
   static const String updateFeedUrl = 'https://updates.cyberdesk.io/manifest.json';
 

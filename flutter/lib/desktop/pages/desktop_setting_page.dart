@@ -1578,6 +1578,15 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
     final relayServer = bind.mainGetOptionSync(key: 'relay-server');
     final apiServer = bind.mainGetOptionSync(key: 'api-server');
     final key = bind.mainGetOptionSync(key: 'key');
+    final developerMode =
+        bind.mainGetLocalOption(key: 'cyberdesk_developer_mode') == 'Y';
+    if (developerMode &&
+        idServer == CyberdeskBranding.devRendezvousServer &&
+        relayServer == CyberdeskBranding.devRelayServer &&
+        apiServer == CyberdeskBranding.devApiServer &&
+        key == CyberdeskBranding.devHbbsPubkey) {
+      return 'development';
+    }
     if (idServer == CyberdeskBranding.prodRendezvousServer &&
         relayServer == CyberdeskBranding.prodRelayServer &&
         apiServer == CyberdeskBranding.prodApiServer &&
@@ -1588,7 +1597,19 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   }
 
   Future<void> _applyCyberdeskEnvironment(String value) async {
-    if (value == 'production') {
+    if (value == 'development') {
+      await bind.mainSetOption(
+          key: 'custom-rendezvous-server',
+          value: CyberdeskBranding.devRendezvousServer);
+      await bind.mainSetOption(
+          key: 'relay-server', value: CyberdeskBranding.devRelayServer);
+      await bind.mainSetOption(
+          key: 'api-server', value: CyberdeskBranding.devApiServer);
+      await bind.mainSetOption(
+          key: 'key', value: CyberdeskBranding.devHbbsPubkey);
+      await bind.mainSetLocalOption(
+          key: 'cyberdesk_api_base', value: CyberdeskBranding.devTunnelApiBase);
+    } else if (value == 'production') {
       await bind.mainSetOption(
           key: 'custom-rendezvous-server',
           value: CyberdeskBranding.prodRendezvousServer);
@@ -1729,6 +1750,8 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
         bind.mainGetLocalOption(key: 'cyberdesk_keepalive_enabled') != 'N';
     final remoteKeepaliveFor =
         bind.mainGetLocalOption(key: 'cyberdesk_remote_keepalive_for').trim();
+    final developerMode =
+        bind.mainGetLocalOption(key: 'cyberdesk_developer_mode') == 'Y';
     if (_remoteKeepaliveForController.text.isEmpty &&
         remoteKeepaliveFor.isNotEmpty) {
       _remoteKeepaliveForController.text = remoteKeepaliveFor;
@@ -1745,7 +1768,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                 title: 'Cyberdesk environment',
                 showTooltip: true,
                 tooltipMessage:
-                    'Production is the default for customers. Use Custom for manual host overrides.',
+                    'Production is the default for customers. Enable Developer mode below to reveal the internal Development preset, or use Custom for manual host overrides.',
                 trailing: DropdownButton<String>(
                   value: _currentCyberdeskEnvironment(),
                   underline: const SizedBox.shrink(),
@@ -1756,11 +1779,35 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                             await _applyCyberdeskEnvironment(value);
                           }
                         },
-                  items: const [
-                    DropdownMenuItem(
+                  items: [
+                    const DropdownMenuItem(
                         value: 'production', child: Text('Production')),
-                    DropdownMenuItem(value: 'custom', child: Text('Custom')),
+                    if (developerMode)
+                      const DropdownMenuItem(
+                          value: 'development',
+                          child: Text('Development (internal)')),
+                    const DropdownMenuItem(
+                        value: 'custom', child: Text('Custom')),
                   ],
+                ),
+              ),
+              divider,
+              listTile(
+                icon: Icons.developer_mode_outlined,
+                title: 'Developer mode',
+                showTooltip: true,
+                tooltipMessage:
+                    'Internal use only. Reveals the Development environment preset for testing against Cyberdesk dev infrastructure.',
+                trailing: Switch(
+                  value: developerMode,
+                  onChanged: locked
+                      ? null
+                      : (value) async {
+                          await bind.mainSetLocalOption(
+                              key: 'cyberdesk_developer_mode',
+                              value: value ? 'Y' : '');
+                          setState(() {});
+                        },
                 ),
               ),
               divider,
