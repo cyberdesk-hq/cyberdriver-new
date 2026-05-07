@@ -1549,6 +1549,16 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   final scrollController = ScrollController();
 
   @override
+  void initState() {
+    super.initState();
+    final remoteKeepaliveFor =
+        bind.mainGetLocalOption(key: 'cyberdesk_remote_keepalive_for').trim();
+    if (remoteKeepaliveFor.isNotEmpty) {
+      _remoteKeepaliveForController.text = remoteKeepaliveFor;
+    }
+  }
+
+  @override
   void dispose() {
     _cyberdeskApiKeyController.dispose();
     _remoteKeepaliveForController.dispose();
@@ -1748,14 +1758,8 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
         bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
     final keepaliveEnabled =
         bind.mainGetLocalOption(key: 'cyberdesk_keepalive_enabled') != 'N';
-    final remoteKeepaliveFor =
-        bind.mainGetLocalOption(key: 'cyberdesk_remote_keepalive_for').trim();
     final developerMode =
         bind.mainGetLocalOption(key: 'cyberdesk_developer_mode') == 'Y';
-    if (_remoteKeepaliveForController.text.isEmpty &&
-        remoteKeepaliveFor.isNotEmpty) {
-      _remoteKeepaliveForController.text = remoteKeepaliveFor;
-    }
     return _Card(
       title: 'Network',
       children: [
