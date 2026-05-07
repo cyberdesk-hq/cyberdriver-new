@@ -155,29 +155,20 @@ pub fn exec(body: &[u8]) -> Result<Vec<u8>> {
         .timeout
         .unwrap_or(30.0)
         .clamp(0.1, MAX_TIMEOUT_SECONDS);
-    let use_persistent_session = request.same_session && request.session_id.is_some();
-    let session_id = if use_persistent_session {
-        session_id_or_new(request.session_id)?
-    } else {
-        request
-            .session_id
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
-    };
-    let result = if use_persistent_session {
-        run_session_command(
-            &request.command,
-            request.working_directory.as_deref(),
-            timeout,
-            session_id,
-        )?
-    } else {
-        run_command(
-            &request.command,
-            request.working_directory.as_deref(),
-            Some(timeout),
-            Some(session_id),
-        )?
-    };
+    let _same_session = request.same_session;
+    // Match legacy cyberdriver.py: execute_terminal_command accepts same_session
+    // and session_id for API compatibility, but /exec itself is stateless and
+    // launches a fresh PowerShell process per command. Persistent sessions are
+    // only managed through the explicit /powershell/session compatibility API.
+    let session_id = request
+        .session_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let result = run_command(
+        &request.command,
+        request.working_directory.as_deref(),
+        Some(timeout),
+        Some(session_id),
+    )?;
 
     Ok(serde_json::to_vec(&result)?)
 }
@@ -276,15 +267,17 @@ fn run_session_command(
     drop(command_guard);
 
     match command_result {
-        Ok((stdout, stderr, exit_code)) => Ok(PowerShellExecResponse {
-            stdout,
-            stderr,
-            exit_code,
-            session_id,
-            session_created,
-            timeout_reached: None,
-            error: None,
-        }),
+        Ok((stdout, stderr, exit_code)) => {
+            Ok(PowerShellExecResponse {
+                stdout,
+                stderr,
+                exit_code,
+                session_id,
+                session_created,
+                timeout_reached: None,
+                error: None,
+            })
+        }
         Err(err) => {
             remove_and_terminate_session(&session_id, &session);
             let exit_code = if err.timed_out { 124 } else { -1 };
