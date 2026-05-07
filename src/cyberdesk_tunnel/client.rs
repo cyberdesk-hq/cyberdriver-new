@@ -46,10 +46,10 @@ use tokio_tungstenite::{
     },
 };
 
-/// X-Piglet-Version header value. Mirrors what cyberdriver.py used to
-/// send so the cloud's logging + analytics treat this as a Cyberdriver
-/// agent, not a foreign client.
-const VERSION: &str = concat!("cyberdriver-rs/", env!("CARGO_PKG_VERSION"));
+/// X-Piglet-Version header value. Keep this as a plain semantic version so
+/// Cyberdesk can compare legacy Python agents and the RustDesk-based client
+/// without string-prefix special cases.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_REQUEST_BODY_BYTES: usize = 150 * 1024 * 1024;
 const MAX_IN_FLIGHT_DISPATCHES: usize = 4;
 const MAX_IDEMPOTENCY_ENTRIES: usize = 128;
