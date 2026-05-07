@@ -1584,10 +1584,6 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
         key == CyberdeskBranding.prodHbbsPubkey) {
       return 'production';
     }
-    final stored = bind.mainGetLocalOption(key: 'cyberdesk_environment').trim();
-    if (stored == 'custom') {
-      return stored;
-    }
     return 'custom';
   }
 
