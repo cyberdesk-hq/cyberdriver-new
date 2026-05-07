@@ -219,6 +219,15 @@ pub fn mouse_drag(body: &[u8]) -> Result<Vec<u8>> {
     empty_json()
 }
 
+pub fn perform_keepalive_tick() {
+    if let Some((x, y)) = crate::get_cursor_pos() {
+        let nudge_x = if x <= 0 { x.saturating_add(1) } else { x - 1 };
+        send_mouse(crate::input::MOUSE_TYPE_MOVE, 0, nudge_x, y);
+        thread::sleep(Duration::from_millis(50));
+        send_mouse(crate::input::MOUSE_TYPE_MOVE, 0, x, y);
+    }
+}
+
 pub fn keyboard_type(body: &[u8]) -> Result<Vec<u8>> {
     let mut request: KeyboardTypeRequest = parse_input_json(body)?;
     if request.text.is_empty() {

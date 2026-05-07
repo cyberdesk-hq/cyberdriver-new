@@ -7,7 +7,11 @@
 // X11/Wayland display is available.
 
 use serde_json::json;
-use std::io::Read as _;
+use std::{
+    io::{Read as _, Seek as _, SeekFrom},
+    path::PathBuf,
+    time::Duration,
+};
 
 const NAME_ENV: &str = "CYBERDRIVER_MACHINE_NAME";
 const NAME_MAX_LEN: usize = 128;
@@ -132,7 +136,7 @@ fn parse_command(args: &[String]) -> EarlyCommand {
             EarlyCommand::Handled(0)
         }
         "logs" => {
-            print_logs_hint();
+            print_logs(args);
             EarlyCommand::Handled(0)
         }
         _ => EarlyCommand::Continue,
@@ -462,11 +466,81 @@ fn stop_service_process() -> bool {
     false
 }
 
-fn print_logs_hint() {
-    println!("Cyberdriver logs are written under the RustDesk/Cyberdriver config log directory.");
-    println!(
-        "Use the service manager or dashboard diagnostics for live tunnel logs in this build."
-    );
+fn print_logs(args: &[String]) {
+    let path = option_value(args, "--path")
+        .map(PathBuf::from)
+        .or_else(latest_log_file)
+        .unwrap_or_else(|| hbb_common::config::Config::log_path());
+    let tail = option_value(args, "--tail")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(64 * 1024);
+
+    println!("Cyberdriver log path: {}", path.display());
+    if path.is_dir() {
+        println!("No log file selected. Pass --path <file> or start Cyberdriver first.");
+        return;
+    }
+    if let Err(err) = print_log_tail(&path, tail) {
+        eprintln!("failed to read log file: {err}");
+        return;
+    }
+    if has_flag(args, "--follow") || has_flag(args, "-f") {
+        follow_log(&path);
+    }
+}
+
+fn latest_log_file() -> Option<PathBuf> {
+    let log_dir = hbb_common::config::Config::log_path();
+    let entries = std::fs::read_dir(log_dir).ok()?;
+    entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            let modified = metadata.modified().ok()?;
+            Some((modified, path))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+}
+
+fn print_log_tail(path: &PathBuf, max_bytes: u64) -> std::io::Result<u64> {
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start))?;
+    let mut out = String::new();
+    file.read_to_string(&mut out)?;
+    print!("{out}");
+    Ok(len)
+}
+
+fn follow_log(path: &PathBuf) {
+    let mut offset = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let Ok(mut file) = std::fs::File::open(path) else {
+            continue;
+        };
+        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if len < offset {
+            offset = 0;
+        }
+        if len == offset {
+            continue;
+        }
+        if file.seek(SeekFrom::Start(offset)).is_err() {
+            continue;
+        }
+        let mut out = String::new();
+        if file.read_to_string(&mut out).is_ok() {
+            print!("{out}");
+            offset = len;
+        }
+    }
 }
 
 fn print_help() {
@@ -480,7 +554,7 @@ Usage:
   cyberdriver config-print
   cyberdriver reset-fingerprint
   cyberdriver stop
-  cyberdriver logs
+  cyberdriver logs [--path <file>] [--tail <bytes>] [--follow]
   cyberdriver --version
   cyberdriver --help
 "#
@@ -628,6 +702,10 @@ fn is_known_option(value: &str) -> bool {
             | "--reset-fingerprint"
             | "--allow-insecure-api-base"
             | "--service-config-profile"
+            | "--path"
+            | "--tail"
+            | "--follow"
+            | "-f"
             | "-h"
             | "--help"
     )

@@ -85,6 +85,7 @@ pub fn spawn_if_enabled() {
         api_base,
         fingerprint
     );
+    internal::spawn_keepalive_loop();
 
     // Schedule onto RustDesk's existing tokio runtime via hbb_common's
     // re-export. We deliberately do NOT create a new runtime here.
