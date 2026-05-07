@@ -2702,7 +2702,6 @@ impl LoginConfigHandler {
             .into(),
             hwid,
             avatar,
-            cyberdesk_token: LocalConfig::get_option("access_token"),
             cyberdesk_selected_organization_id: LocalConfig::get_option(
                 "cyberdesk_selected_organization_id",
             ),

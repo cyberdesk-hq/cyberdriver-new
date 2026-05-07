@@ -66,6 +66,11 @@ jobs:
           flutter doctor -v
           flutter precache --windows
           Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          $expectedHash = "ec8cabf36ee4ff24c8d98de25b00e70781eb03876265aee84d0fe554a110036e"
+          $actualHash = (Get-FileHash windows-x64-release.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "RustDesk Flutter engine checksum mismatch: expected $expectedHash, got $actualHash"
+          }
           Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
           $engineDir = "C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release"
           Copy-Item -Recurse -Force windows-x64-release/* $engineDir
