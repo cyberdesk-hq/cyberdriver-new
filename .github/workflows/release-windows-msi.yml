@@ -1,9 +1,6 @@
 name: Cyberdriver Windows MSI Release
 
 on:
-  push:
-    branches:
-      - dev
   workflow_dispatch:
     inputs:
       release_tag:

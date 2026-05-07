@@ -1578,12 +1578,6 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
     final relayServer = bind.mainGetOptionSync(key: 'relay-server');
     final apiServer = bind.mainGetOptionSync(key: 'api-server');
     final key = bind.mainGetOptionSync(key: 'key');
-    if (idServer == CyberdeskBranding.devRendezvousServer &&
-        relayServer == CyberdeskBranding.devRelayServer &&
-        apiServer == CyberdeskBranding.devApiServer &&
-        key == CyberdeskBranding.devHbbsPubkey) {
-      return 'development';
-    }
     if (idServer == CyberdeskBranding.prodRendezvousServer &&
         relayServer == CyberdeskBranding.prodRelayServer &&
         apiServer == CyberdeskBranding.prodApiServer &&
@@ -1598,19 +1592,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   }
 
   Future<void> _applyCyberdeskEnvironment(String value) async {
-    if (value == 'development') {
-      await bind.mainSetOption(
-          key: 'custom-rendezvous-server',
-          value: CyberdeskBranding.devRendezvousServer);
-      await bind.mainSetOption(
-          key: 'relay-server', value: CyberdeskBranding.devRelayServer);
-      await bind.mainSetOption(
-          key: 'api-server', value: CyberdeskBranding.devApiServer);
-      await bind.mainSetOption(
-          key: 'key', value: CyberdeskBranding.devHbbsPubkey);
-      await bind.mainSetLocalOption(
-          key: 'cyberdesk_api_base', value: CyberdeskBranding.devTunnelApiBase);
-    } else if (value == 'production') {
+    if (value == 'production') {
       await bind.mainSetOption(
           key: 'custom-rendezvous-server',
           value: CyberdeskBranding.prodRendezvousServer);
@@ -1767,7 +1749,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                 title: 'Cyberdesk environment',
                 showTooltip: true,
                 tooltipMessage:
-                    'Production is the default for customers. Development points the desktop API, hbbs, hbbr, and service tunnel at Cyberdesk dev. Use Custom for manual host overrides.',
+                    'Production is the default for customers. Use Custom for manual host overrides.',
                 trailing: DropdownButton<String>(
                   value: _currentCyberdeskEnvironment(),
                   underline: const SizedBox.shrink(),
@@ -1781,8 +1763,6 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                   items: const [
                     DropdownMenuItem(
                         value: 'production', child: Text('Production')),
-                    DropdownMenuItem(
-                        value: 'development', child: Text('Development')),
                     DropdownMenuItem(value: 'custom', child: Text('Custom')),
                   ],
                 ),
