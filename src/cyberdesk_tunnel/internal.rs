@@ -20,7 +20,6 @@ static KEEPALIVE_ENABLED: AtomicBool = AtomicBool::new(true);
 static LAST_REMOTE_ACTIVITY_SECS: AtomicU64 = AtomicU64::new(0);
 static KEEPALIVE_LOOP_STARTED: AtomicBool = AtomicBool::new(false);
 
-const MAX_DIAGNOSTIC_LOG_BYTES: u64 = 64 * 1024;
 const KEEPALIVE_ENABLED_OPTION: &str = "cyberdesk_keepalive_enabled";
 const KEEPALIVE_THRESHOLD_MINUTES_OPTION: &str = "cyberdesk_keepalive_threshold_minutes";
 const DEFAULT_KEEPALIVE_THRESHOLD_MINUTES: u64 = 3;
@@ -45,7 +44,6 @@ struct Diagnostics {
     tunnel_config_path: String,
     log_dir: String,
     latest_log_path: Option<String>,
-    latest_log_tail: Option<String>,
     display_dimensions: Option<Value>,
     shutdown_requested: bool,
     keepalive_enabled: bool,
@@ -55,9 +53,6 @@ struct Diagnostics {
 pub fn diagnostics() -> Result<Vec<u8>> {
     let log_dir = Config::log_path();
     let latest_log = latest_log_file(&log_dir);
-    let latest_log_tail = latest_log
-        .as_ref()
-        .and_then(|path| tail_file(path, MAX_DIAGNOSTIC_LOG_BYTES).ok());
     let display_dimensions = super::display::dimensions()
         .ok()
         .and_then(|body| serde_json::from_slice::<Value>(&body).ok());
@@ -82,7 +77,6 @@ pub fn diagnostics() -> Result<Vec<u8>> {
         tunnel_config_path: crate::cyberdesk_tunnel::config_path().display().to_string(),
         log_dir: log_dir.display().to_string(),
         latest_log_path: latest_log.map(|path| path.display().to_string()),
-        latest_log_tail,
         display_dimensions,
         shutdown_requested: SHUTDOWN_REQUESTED.load(Ordering::SeqCst),
         keepalive_enabled: keepalive_enabled(),
@@ -114,6 +108,21 @@ pub fn keepalive_disable() -> Result<(u16, Vec<u8>, &'static str)> {
 pub fn keepalive_enabled() -> bool {
     KEEPALIVE_ENABLED.load(Ordering::SeqCst)
         && LocalConfig::get_option(KEEPALIVE_ENABLED_OPTION) != "N"
+}
+
+pub fn shutdown_enabled() -> bool {
+    internal_action_enabled("CYBERDESK_ENABLE_INTERNAL_SHUTDOWN")
+}
+
+pub fn update_enabled() -> bool {
+    internal_action_enabled("CYBERDESK_ENABLE_INTERNAL_UPDATE")
+}
+
+fn internal_action_enabled(env_key: &str) -> bool {
+    matches!(
+        std::env::var(env_key),
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
+    )
 }
 
 pub fn spawn_keepalive_loop() {
@@ -213,22 +222,6 @@ fn latest_log_file(log_dir: &Path) -> Option<PathBuf> {
         })
         .max_by_key(|(modified, _)| *modified)
         .map(|(_, path)| path)
-}
-
-fn tail_file(path: &Path, max_bytes: u64) -> Result<String> {
-    use std::io::{Read as _, Seek as _, SeekFrom};
-
-    let mut file = fs::File::open(path).context("failed to open log file")?;
-    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-    if len > max_bytes {
-        file.seek(SeekFrom::Start(len - max_bytes))
-            .context("failed to seek log file")?;
-    }
-    let mut bytes = Vec::new();
-    file.take(max_bytes)
-        .read_to_end(&mut bytes)
-        .context("failed to read log file")?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn platform_name() -> &'static str {
