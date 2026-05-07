@@ -2568,6 +2568,7 @@ connect(BuildContext context, String id,
         password: password,
         isSharedPassword: isSharedPassword,
         forceRelay: forceRelay,
+        connToken: connToken,
         tabLabel: tabLabel,
       );
     } else {
