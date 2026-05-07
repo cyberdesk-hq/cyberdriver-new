@@ -2250,7 +2250,7 @@ impl Connection {
             log::warn!("Cyberdesk connection token present but API server is not configured");
             return false;
         }
-        if !cyberdesk_api_server_allows_auth(&api_server) {
+        if !Self::cyberdesk_api_server_allows_auth(&api_server) {
             log::warn!(
                 "Cyberdesk connection authorization skipped: refusing to send machine API key over insecure non-loopback API server {}",
                 api_server
