@@ -727,6 +727,14 @@ jobs:
           fi
           ./build.py --flutter --hwcodec --unix-file-copy-paste ${{ matrix.job.extra-build-args }}
 
+      - name: Seal unsigned macOS app bundle
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          # build.py adds helper binaries after Xcode signs the app, so re-seal
+          # unsigned/test bundles before packaging them into DMGs.
+          codesign --force --deep --sign - ./flutter/build/macos/Build/Products/Release/Cyberdriver.app
+          codesign --verify --deep --strict --verbose=2 ./flutter/build/macos/Build/Products/Release/Cyberdriver.app
+
       - name: create unsigned dmg
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
