@@ -154,7 +154,11 @@ jobs:
           msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
           Pop-Location
           New-Item -ItemType Directory -Force SignOutput | Out-Null
-          Copy-Item res\msi\Package\bin\x64\Release\en-us\Package.msi "SignOutput\Cyberdriver-${{ steps.version.outputs.version }}-windows-x64.msi"
+          $packageMsi = Get-ChildItem -Path res\msi\Package\bin -Recurse -Filter Package.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $packageMsi) {
+            throw "Package.msi was not found under res\msi\Package\bin"
+          }
+          Copy-Item $packageMsi.FullName "SignOutput\Cyberdriver-${{ steps.version.outputs.version }}-windows-x64.msi"
           Get-FileHash "SignOutput\Cyberdriver-${{ steps.version.outputs.version }}-windows-x64.msi" -Algorithm SHA256
 
       - name: Upload MSI artifact
