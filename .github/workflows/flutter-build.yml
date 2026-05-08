@@ -771,12 +771,9 @@ jobs:
       - name: Rename Cyberdriver DMG
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
-          for name in Cyberdriver*.dmg; do
-              case "$name" in
-                  *-${{ matrix.job.arch }}.dmg) continue ;;
-              esac
-              mv "$name" "${name%%.dmg}-${{ matrix.job.arch }}.dmg"
-          done
+          if [ -f "Cyberdriver-${{ env.VERSION }}.dmg" ]; then
+              mv "Cyberdriver-${{ env.VERSION }}.dmg" "Cyberdriver-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg"
+          fi
 
       - name: Publish DMG package
         if: env.UPLOAD_ARTIFACT == 'true'
