@@ -33,6 +33,12 @@ class CyberdeskBranding {
   // Display strings shown in UI. Kept here so non-engineering
   // contributors can edit copy without touching Dart logic.
   static const String loginButtonLabel = 'Sign in for peer access';
+  static const String peerAccessEmptyTitle =
+      'Log in for peer access to other desktops in your organization';
+  static const String peerAccessEmptySubtitle =
+      'Dashboard streaming and remote control work with your API key. '
+      'Desktop sign-in is only needed when you want this app to browse '
+      'and connect to peers.';
   static const String enableServiceLabel = 'Enable Cyberdesk service';
   static const String disableServiceLabel = 'Disable Cyberdesk service';
   static const String tunnelStatusLabel = 'Cyberdesk tunnel';

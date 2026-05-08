@@ -15,6 +15,7 @@ import 'package:flutter_hbb/models/peer_model.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../common.dart';
+import '../../common/widgets/login.dart';
 import '../../common/widgets/peer_card.dart';
 import '../../models/platform_model.dart';
 
@@ -411,16 +412,7 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
               ),
               Expanded(
                 child: desktops.isEmpty
-                    ? Center(
-                        child: Text(
-                          _refreshing
-                              ? translate('Loading...')
-                              : allDesktops.isNotEmpty
-                                  ? 'No desktops match your search.'
-                                  : 'No desktops in this organization yet.',
-                          textAlign: TextAlign.center,
-                        ),
-                      )
+                    ? _buildEmptyState(context, allDesktops)
                     : GridView.builder(
                         gridDelegate:
                             const SliverGridDelegateWithMaxCrossAxisExtent(
@@ -443,6 +435,61 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
         },
       ),
     );
+  }
+
+  Widget _buildEmptyState(BuildContext context, List<Peer> allDesktops) {
+    if (_refreshing) {
+      return Center(
+        child: Text(
+          translate('Loading...'),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    if (allDesktops.isNotEmpty) {
+      return const Center(
+        child: Text(
+          'No desktops match your search.',
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    return Obx(() {
+      if (gFFI.userModel.isLogin) {
+        return const Center(
+          child: Text(
+            'No other desktops are available in this organization yet.',
+            textAlign: TextAlign.center,
+          ),
+        );
+      }
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                CyberdeskBranding.peerAccessEmptyTitle,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                CyberdeskBranding.peerAccessEmptySubtitle,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 18),
+              ElevatedButton(
+                onPressed: loginDialog,
+                child: const Text('Login'),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
   }
 }
 

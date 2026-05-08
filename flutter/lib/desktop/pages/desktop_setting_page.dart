@@ -1556,6 +1556,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
     if (remoteKeepaliveFor.isNotEmpty) {
       _remoteKeepaliveForController.text = remoteKeepaliveFor;
     }
+    _ensureDefaultCyberdeskEnvironment();
   }
 
   @override
@@ -1584,8 +1585,14 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   }
 
   String _currentCyberdeskEnvironment() {
-    if (bind.mainGetLocalOption(key: 'cyberdesk_environment') == 'custom') {
+    final configuredEnvironment =
+        bind.mainGetLocalOption(key: 'cyberdesk_environment');
+    if (configuredEnvironment == 'custom') {
       return 'custom';
+    }
+    if (configuredEnvironment == 'production' ||
+        configuredEnvironment.isEmpty) {
+      return 'production';
     }
     final idServer = bind.mainGetOptionSync(key: 'custom-rendezvous-server');
     final relayServer = bind.mainGetOptionSync(key: 'relay-server');
@@ -1607,6 +1614,12 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
       return 'production';
     }
     return 'custom';
+  }
+
+  Future<void> _ensureDefaultCyberdeskEnvironment() async {
+    if (bind.mainGetLocalOption(key: 'cyberdesk_environment').isEmpty) {
+      await _applyCyberdeskEnvironment('production');
+    }
   }
 
   Future<void> _applyCyberdeskEnvironment(String value) async {
@@ -1637,7 +1650,9 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
           value: CyberdeskBranding.prodTunnelApiBase);
     }
     await bind.mainSetLocalOption(key: 'cyberdesk_environment', value: value);
-    setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _copyCyberdeskDiagnostics() async {

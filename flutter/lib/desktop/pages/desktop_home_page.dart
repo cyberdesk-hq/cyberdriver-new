@@ -620,6 +620,22 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       await bind.mainSetUserDefaultOption(
           key: kOptionViewStyle, value: kRemoteViewStyleAdaptive);
     }
+    if (bind.mainGetLocalOption(key: 'cyberdesk_environment').isEmpty) {
+      await bind.mainSetOption(
+          key: 'custom-rendezvous-server',
+          value: CyberdeskBranding.prodRendezvousServer);
+      await bind.mainSetOption(
+          key: 'relay-server', value: CyberdeskBranding.prodRelayServer);
+      await bind.mainSetOption(
+          key: 'api-server', value: CyberdeskBranding.prodApiServer);
+      await bind.mainSetOption(
+          key: 'key', value: CyberdeskBranding.prodHbbsPubkey);
+      await bind.mainSetLocalOption(
+          key: 'cyberdesk_api_base',
+          value: CyberdeskBranding.prodTunnelApiBase);
+      await bind.mainSetLocalOption(
+          key: 'cyberdesk_environment', value: 'production');
+    }
   }
 
   Widget buildHelpCards(String updateUrl) {
