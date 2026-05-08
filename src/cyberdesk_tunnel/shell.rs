@@ -213,10 +213,7 @@ fn run_session_command(
             (session.clone(), false)
         } else {
             if guard.len() >= MAX_SESSIONS {
-                clear_all_sessions(&mut guard);
-            }
-            if guard.len() >= MAX_SESSIONS {
-                bail!("too many active PowerShell sessions after cleanup");
+                bail!("too many active PowerShell sessions");
             }
             let session = Arc::new(spawn_session()?);
             guard.insert(session_id.clone(), session.clone());
@@ -310,10 +307,7 @@ fn create_session(requested_session_id: Option<String>) -> Result<String> {
         return Ok(session_id);
     }
     if guard.len() >= MAX_SESSIONS {
-        clear_all_sessions(&mut guard);
-    }
-    if guard.len() >= MAX_SESSIONS {
-        bail!("too many active PowerShell sessions after cleanup");
+        bail!("too many active PowerShell sessions");
     }
     guard.insert(session_id.clone(), Arc::new(spawn_session()?));
     Ok(session_id)
@@ -574,13 +568,6 @@ fn remove_and_terminate_session(session_id: &str, session: &Arc<PowerShellSessio
         }
     };
     if let Some(session) = removed {
-        terminate_process_tree(&mut lock_child(&session));
-    }
-}
-
-fn clear_all_sessions(sessions: &mut HashMap<String, Arc<PowerShellSession>>) {
-    let sessions_to_terminate: Vec<_> = sessions.drain().map(|(_, session)| session).collect();
-    for session in sessions_to_terminate {
         terminate_process_tree(&mut lock_child(&session));
     }
 }
