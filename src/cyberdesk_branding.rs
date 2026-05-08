@@ -18,7 +18,7 @@ use hbb_common::config::{Config, LocalConfig, APP_NAME, BUILTIN_SETTINGS};
 // ---- Branding constants (mirror branding/app_strings.json) ----
 
 pub const APP_NAME_STR: &str = "Cyberdriver";
-pub const APP_COMPANY: &str = "Cyberdesk Inc.";
+pub const APP_COMPANY: &str = "Cyberdesk, Inc";
 pub const SUPPORT_URL: &str = "https://cyberdesk.io/support";
 pub const AGPL_SOURCE_URL_CLIENT: &str = "https://github.com/cyberdesk-hq/cyberdriver-new";
 pub const AGPL_SOURCE_URL_SERVER: &str = "https://github.com/cyberdesk-hq/cyberdriver-server";

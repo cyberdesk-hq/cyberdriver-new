@@ -8,7 +8,7 @@
 
 class CyberdeskBranding {
   static const String appName = 'Cyberdriver';
-  static const String appCompany = 'Cyberdesk Inc.';
+  static const String appCompany = 'Cyberdesk, Inc';
   static const String supportUrl = 'https://cyberdesk.io/support';
   static const String websiteUrl = 'https://cyberdesk.io';
   static const String privacyPolicyUrl = 'https://www.cyberdesk.io/privacy';

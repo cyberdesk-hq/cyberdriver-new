@@ -149,7 +149,7 @@ jobs:
         shell: pwsh
         run: |
           Push-Location res\msi
-          python preprocess.py --arp -d ../../msi-dist --app-name Cyberdriver -m "Cyberdesk Inc." -v "${{ steps.version.outputs.version }}"
+          python preprocess.py --arp -d ../../msi-dist --app-name Cyberdriver -m "Cyberdesk, Inc" -v "${{ steps.version.outputs.version }}"
           nuget restore msi.sln
           msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
           Pop-Location
