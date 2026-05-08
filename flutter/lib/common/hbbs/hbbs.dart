@@ -131,7 +131,6 @@ class PeerPayload {
     final machineId = p.machineId.isNotEmpty ? p.machineId : infoMachineId;
     final machineName =
         p.machineName.isNotEmpty ? p.machineName : infoMachineName;
-    final displayName = machineName.isNotEmpty ? machineName : machineId;
     return Peer.fromJson({
       "id": p.id,
       "machine_id": machineId,
@@ -140,7 +139,6 @@ class PeerPayload {
       "username": p.info['username'] ?? '',
       "platform": _platform(p.info['os']),
       "hostname": p.info['device_name'],
-      "alias": displayName,
       "device_group_name": p.device_group_name,
       "note": p.note,
     });
