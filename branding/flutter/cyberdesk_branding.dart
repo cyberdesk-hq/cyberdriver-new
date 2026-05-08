@@ -10,6 +10,8 @@ class CyberdeskBranding {
   static const String appName = 'Cyberdriver';
   static const String appCompany = 'Cyberdesk Inc.';
   static const String supportUrl = 'https://cyberdesk.io/support';
+  static const String websiteUrl = 'https://cyberdesk.io';
+  static const String privacyPolicyUrl = 'https://www.cyberdesk.io/privacy';
   static const String agplSourceUrlClient =
       'https://github.com/cyberdesk-hq/cyberdriver-new';
   static const String agplSourceUrlServer =
@@ -39,6 +41,8 @@ class CyberdeskBranding {
       'Dashboard streaming and remote control work with your API key. '
       'Desktop sign-in is only needed when you want this app to browse '
       'and connect to peers.';
+  static const String aboutTagline =
+      'The easiest way to automate computers with AI.';
   static const String enableServiceLabel = 'Enable Cyberdesk service';
   static const String disableServiceLabel = 'Disable Cyberdesk service';
   static const String tunnelStatusLabel = 'Cyberdesk tunnel';
