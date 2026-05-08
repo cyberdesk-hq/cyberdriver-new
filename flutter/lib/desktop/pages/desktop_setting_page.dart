@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/cyberdesk_environment.dart';
+import 'package:flutter_hbb/common/hbbs/hbbs.dart';
 import 'package:flutter_hbb/common/widgets/audio_input.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -2368,6 +2369,8 @@ class _AccountState extends State<_Account> {
             ),
             child: Builder(builder: (context) {
               final avatarWidget = _buildUserAvatar();
+              final organizations =
+                  gFFI.userModel.organizations.toList(growable: false);
               return Row(
                 children: [
                   if (avatarWidget != null) avatarWidget,
@@ -2398,7 +2401,7 @@ class _AccountState extends State<_Account> {
                             ),
                           ),
                         ),
-                        if (gFFI.userModel.organizations.length > 1) ...[
+                        if (organizations.length > 1) ...[
                           const SizedBox(height: 10),
                           Text(
                             'Organization',
@@ -2412,7 +2415,8 @@ class _AccountState extends State<_Account> {
                           DropdownButton<String>(
                             key: ValueKey(
                                 gFFI.userModel.selectedOrganizationId.value),
-                            value: _selectedOrganizationDropdownValue(),
+                            value: _selectedOrganizationDropdownValue(
+                                organizations),
                             isDense: true,
                             underline: const SizedBox.shrink(),
                             onChanged: (value) async {
@@ -2423,7 +2427,7 @@ class _AccountState extends State<_Account> {
                                 }
                               }
                             },
-                            items: gFFI.userModel.organizations
+                            items: organizations
                                 .map((org) => DropdownMenuItem<String>(
                                       value: org.id,
                                       child: Text(
@@ -2442,8 +2446,8 @@ class _AccountState extends State<_Account> {
         )).marginOnly(left: 18, top: 16);
   }
 
-  String _selectedOrganizationDropdownValue() {
-    final organizations = gFFI.userModel.organizations;
+  String _selectedOrganizationDropdownValue(
+      List<CyberdeskOrganization> organizations) {
     final selected = gFFI.userModel.selectedOrganizationId.value;
     if (selected.isNotEmpty && organizations.any((org) => org.id == selected)) {
       return selected;
