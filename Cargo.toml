@@ -234,9 +234,9 @@ libxdo-sys = { path = "libs/libxdo-sys-stub" }
 
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2026 Cyberdesk, Inc"
-ProductName = "RustDesk"
-FileDescription = "RustDesk Remote Desktop"
-OriginalFilename = "rustdesk.exe"
+ProductName = "Cyberdriver"
+FileDescription = "Cyberdriver Remote Desktop"
+OriginalFilename = "Cyberdriver.exe"
 
 [target.'cfg(target_os="windows")'.build-dependencies]
 winres = "0.1"
