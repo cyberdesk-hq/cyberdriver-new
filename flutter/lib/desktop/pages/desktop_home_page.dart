@@ -600,9 +600,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       if (connectAfterSave) {
         await start_service(true);
       }
-      setState(() {
-        _cyberdeskApiKeyEditing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _cyberdeskApiKeyEditing = false;
+        });
+      }
     } finally {
       if (mounted) {
         setState(() {

@@ -11,7 +11,7 @@ on:
         description: "Build only macOS desktop DMGs"
         required: false
         type: boolean
-        default: true
+        default: false
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
