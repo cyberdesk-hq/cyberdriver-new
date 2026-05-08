@@ -1584,6 +1584,9 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   }
 
   String _currentCyberdeskEnvironment() {
+    if (bind.mainGetLocalOption(key: 'cyberdesk_environment') == 'custom') {
+      return 'custom';
+    }
     final idServer = bind.mainGetOptionSync(key: 'custom-rendezvous-server');
     final relayServer = bind.mainGetOptionSync(key: 'relay-server');
     final apiServer = bind.mainGetOptionSync(key: 'api-server');
