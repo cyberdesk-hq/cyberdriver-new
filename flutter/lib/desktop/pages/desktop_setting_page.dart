@@ -1823,7 +1823,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                 title: CyberdeskBranding.tunnelStatusLabel,
                 showTooltip: true,
                 tooltipMessage:
-                    'Set a Cyberdesk org API key to enable the service-mode tunnel. Local login testing can override API Server from ID/Relay Server settings without changing release defaults.',
+                    'Set a Cyberdesk org API key to enable dashboard streaming and remote control. Desktop sign-in is optional and only used for desktop-to-desktop peer access.',
                 trailing: Text(
                   cyberdeskApiKeyConfigured
                       ? 'Configured'
@@ -1843,11 +1843,11 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                       obscureText: _cyberdeskApiKeyObscured,
                       decoration: InputDecoration(
                         labelText:
-                            translate(CyberdeskBranding.apiKeyFieldLabel),
+                            CyberdeskBranding.apiKeyFieldLabel,
                         hintText: cyberdeskApiKeyConfigured
                             ? translate('API key is configured')
                             : 'ak_...',
-                        helperText: translate(CyberdeskBranding.apiKeyHelpText),
+                        helperText: CyberdeskBranding.apiKeyHelpText,
                         suffixIcon: IconButton(
                           icon: Icon(_cyberdeskApiKeyObscured
                               ? Icons.visibility_outlined

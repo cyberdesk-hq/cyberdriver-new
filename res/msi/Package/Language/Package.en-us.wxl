@@ -58,7 +58,7 @@ This file contains the declaration of all the localizable strings.
 	<String Id="CyberdeskConfigDlgDescription" Value="Set up Cyberdriver for Cyberdesk automation." />
 	<String Id="CyberdeskConfigDlgInstallService" Value="Install and start Cyberdriver as a Windows service" />
 	<String Id="CyberdeskConfigDlgApiKeyLabel" Value="Cyberdesk API key" />
-	<String Id="CyberdeskConfigDlgApiKeyHelp" Value="Required for service-mode automation. Leave blank only for client-only installs." />
+	<String Id="CyberdeskConfigDlgApiKeyHelp" Value="Required for dashboard streaming and remote control. Desktop sign-in is optional." />
 	<String Id="CyberdeskConfigDlgApiBaseLabel" Value="Cyberdesk API base (optional)" />
 	<String Id="CyberdeskConfigDlgApiBaseHelp" Value="Leave blank for production. Use wss:// or https:// for deployed environments." />
 	<String Id="CyberdeskConfigDlgAllowInsecureApiBase" Value="Allow insecure local/dev API base (ws:// or http://)" />

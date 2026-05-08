@@ -32,13 +32,13 @@ class CyberdeskBranding {
 
   // Display strings shown in UI. Kept here so non-engineering
   // contributors can edit copy without touching Dart logic.
-  static const String loginButtonLabel = 'Sign in with Cyberdesk';
+  static const String loginButtonLabel = 'Sign in for peer access';
   static const String enableServiceLabel = 'Enable Cyberdesk service';
   static const String disableServiceLabel = 'Disable Cyberdesk service';
   static const String tunnelStatusLabel = 'Cyberdesk tunnel';
   static const String apiKeyFieldLabel = 'Cyberdesk API key';
   static const String apiKeyHelpText =
-      'Paste an org API key (ak_…) to allow Cyberdesk to control this machine.';
+      'Required for dashboard streaming and remote control. Desktop sign-in is optional and only used for desktop-to-desktop peer access.';
 
   // Tunnel runtime states (M7 Settings UI).
   static const String tunnelConnected = 'Connected';

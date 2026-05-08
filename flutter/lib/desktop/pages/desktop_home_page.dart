@@ -481,6 +481,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 isDense: true,
                 labelText: CyberdeskBranding.apiKeyFieldLabel,
                 hintText: 'ak_...',
+                helperText: CyberdeskBranding.apiKeyHelpText,
                 suffixIcon: IconButton(
                   icon: Icon(_cyberdeskApiKeyObscured
                       ? Icons.visibility_outlined
