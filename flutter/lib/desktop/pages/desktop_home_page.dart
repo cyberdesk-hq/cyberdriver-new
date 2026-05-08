@@ -6,6 +6,7 @@ import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/common/cyberdesk_environment.dart';
 import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -620,22 +621,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       await bind.mainSetUserDefaultOption(
           key: kOptionViewStyle, value: kRemoteViewStyleAdaptive);
     }
-    if (bind.mainGetLocalOption(key: 'cyberdesk_environment').isEmpty) {
-      await bind.mainSetOption(
-          key: 'custom-rendezvous-server',
-          value: CyberdeskBranding.prodRendezvousServer);
-      await bind.mainSetOption(
-          key: 'relay-server', value: CyberdeskBranding.prodRelayServer);
-      await bind.mainSetOption(
-          key: 'api-server', value: CyberdeskBranding.prodApiServer);
-      await bind.mainSetOption(
-          key: 'key', value: CyberdeskBranding.prodHbbsPubkey);
-      await bind.mainSetLocalOption(
-          key: 'cyberdesk_api_base',
-          value: CyberdeskBranding.prodTunnelApiBase);
-      await bind.mainSetLocalOption(
-          key: 'cyberdesk_environment', value: 'production');
-    }
+    await ensureDefaultCyberdeskEnvironment();
   }
 
   Widget buildHelpCards(String updateUrl) {

@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/common/cyberdesk_environment.dart';
 import 'package:flutter_hbb/common/widgets/audio_input.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -1617,39 +1618,11 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   }
 
   Future<void> _ensureDefaultCyberdeskEnvironment() async {
-    if (bind.mainGetLocalOption(key: 'cyberdesk_environment').isEmpty) {
-      await _applyCyberdeskEnvironment('production');
-    }
+    await ensureDefaultCyberdeskEnvironment();
   }
 
   Future<void> _applyCyberdeskEnvironment(String value) async {
-    if (value == 'development') {
-      await bind.mainSetOption(
-          key: 'custom-rendezvous-server',
-          value: CyberdeskBranding.devRendezvousServer);
-      await bind.mainSetOption(
-          key: 'relay-server', value: CyberdeskBranding.devRelayServer);
-      await bind.mainSetOption(
-          key: 'api-server', value: CyberdeskBranding.devApiServer);
-      await bind.mainSetOption(
-          key: 'key', value: CyberdeskBranding.devHbbsPubkey);
-      await bind.mainSetLocalOption(
-          key: 'cyberdesk_api_base', value: CyberdeskBranding.devTunnelApiBase);
-    } else if (value == 'production') {
-      await bind.mainSetOption(
-          key: 'custom-rendezvous-server',
-          value: CyberdeskBranding.prodRendezvousServer);
-      await bind.mainSetOption(
-          key: 'relay-server', value: CyberdeskBranding.prodRelayServer);
-      await bind.mainSetOption(
-          key: 'api-server', value: CyberdeskBranding.prodApiServer);
-      await bind.mainSetOption(
-          key: 'key', value: CyberdeskBranding.prodHbbsPubkey);
-      await bind.mainSetLocalOption(
-          key: 'cyberdesk_api_base',
-          value: CyberdeskBranding.prodTunnelApiBase);
-    }
-    await bind.mainSetLocalOption(key: 'cyberdesk_environment', value: value);
+    await applyCyberdeskEnvironment(value);
     if (mounted) {
       setState(() {});
     }
