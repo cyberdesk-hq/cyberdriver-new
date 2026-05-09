@@ -91,7 +91,7 @@ class UserModel {
       }
 
       final user = UserPayload.fromJson(data);
-      _parseAndUpdateUser(user);
+      await _parseAndUpdateUser(user);
     } catch (e) {
       debugPrint('Failed to refreshCurrentUser: $e');
     } finally {
@@ -147,7 +147,7 @@ class UserModel {
     organizations.clear();
   }
 
-  _parseAndUpdateUser(UserPayload user) {
+  Future<void> _parseAndUpdateUser(UserPayload user) async {
     userName.value = user.name;
     displayName.value = user.displayName;
     avatar.value = user.avatar;
@@ -155,14 +155,14 @@ class UserModel {
     organizations.value = user.organizations;
     selectedOrganizationId.value = user.selectedOrganizationId;
     if (selectedOrganizationId.value.isNotEmpty) {
-      bind.mainSetLocalOption(
+      await bind.mainSetLocalOption(
           key: 'cyberdesk_selected_organization_id',
           value: selectedOrganizationId.value);
     }
-    bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(user));
+    await bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(user));
     if (isWeb) {
       // ugly here, tmp solution
-      bind.mainSetLocalOption(key: 'verifier', value: user.verifier ?? '');
+      await bind.mainSetLocalOption(key: 'verifier', value: user.verifier ?? '');
     }
   }
 
@@ -253,7 +253,7 @@ class UserModel {
     final isLogInDone = loginResponse.type == HttpType.kAuthResTypeToken &&
         loginResponse.access_token != null;
     if (isLogInDone && loginResponse.user != null) {
-      _parseAndUpdateUser(loginResponse.user!);
+      await _parseAndUpdateUser(loginResponse.user!);
     }
 
     return loginResponse;

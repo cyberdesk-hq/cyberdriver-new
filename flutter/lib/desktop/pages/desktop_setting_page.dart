@@ -848,7 +848,7 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
                 password(context),
                 _Card(title: '2FA', children: [tfa()]),
                 if (!isChangeIdDisabled())
-                  _Card(title: 'ID', children: [changeId()]),
+                  _Card(title: 'Identity', children: [generateIdentity()]),
                 more(context),
               ]),
             ),
@@ -975,13 +975,9 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
     return tmpWrapper();
   }
 
-  Widget changeId() {
-    return ChangeNotifierProvider.value(
-        value: gFFI.serverModel,
-        child: Consumer<ServerModel>(builder: ((context, model, child) {
-          return _Button('Change ID', changeIdDialog,
-              enabled: !locked && model.connectStatus > 0);
-        })));
+  Widget generateIdentity() {
+    return _Button('Generate new identity', generateIdentityDialog,
+        enabled: !locked);
   }
 
   Widget permissions(context) {

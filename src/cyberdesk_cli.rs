@@ -94,6 +94,7 @@ struct JoinCommand {
     allow_insecure_api_base: bool,
     remote_keepalive_for: Option<String>,
     keepalive_enabled: Option<bool>,
+    new_identity: bool,
 }
 
 struct MsiConfigureCommand {
@@ -102,6 +103,7 @@ struct MsiConfigureCommand {
     allow_insecure_api_base: bool,
     service_config_profile: bool,
     reset_fingerprint: bool,
+    new_identity: bool,
 }
 
 fn parse_command(args: &[String]) -> EarlyCommand {
@@ -131,6 +133,10 @@ fn parse_command(args: &[String]) -> EarlyCommand {
         }
         "reset-fingerprint" | "--reset-fingerprint" => {
             reset_fingerprint();
+            EarlyCommand::Handled(0)
+        }
+        "new-identity" | "reset-identity" | "--new-identity" => {
+            generate_new_identity();
             EarlyCommand::Handled(0)
         }
         "stop" => {
@@ -192,6 +198,7 @@ fn parse_join(args: &[String]) -> EarlyCommand {
         } else {
             None
         },
+        new_identity: has_flag(args, "--new-identity") || has_flag(args, "--reset-identity"),
     })
 }
 
@@ -220,7 +227,8 @@ fn parse_msi_configure(args: &[String]) -> EarlyCommand {
         },
         None => None,
     };
-    let reset_fingerprint = has_flag(args, "--reset-fingerprint");
+    let new_identity = has_flag(args, "--new-identity") || has_flag(args, "--reset-identity");
+    let reset_fingerprint = has_flag(args, "--reset-fingerprint") || new_identity;
 
     EarlyCommand::MsiConfigure(MsiConfigureCommand {
         api_key,
@@ -228,6 +236,7 @@ fn parse_msi_configure(args: &[String]) -> EarlyCommand {
         allow_insecure_api_base,
         service_config_profile: has_flag(args, "--service-config-profile"),
         reset_fingerprint,
+        new_identity,
     })
 }
 
@@ -262,6 +271,7 @@ fn read_msi_config_from_stdin() -> Result<MsiConfigureCommand, String> {
             "--service-config-profile",
         ),
         reset_fingerprint: false,
+        new_identity: false,
     })
 }
 
@@ -272,6 +282,12 @@ fn run_join(join: JoinCommand) {
         std::process::exit(2);
     }
 
+    if join.new_identity {
+        if let Err(err) = crate::cyberdesk_tunnel::generate_new_identity() {
+            eprintln!("failed to generate new Cyberdriver identity: {err}");
+            std::process::exit(1);
+        }
+    }
     if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(join.secret) {
         eprintln!("error: {message}");
         std::process::exit(2);
@@ -325,7 +341,12 @@ fn run_msi_configure(configure: MsiConfigureCommand) {
     if let Some(api_base) = configure.api_base {
         crate::cyberdesk_tunnel::store_configured_api_base(api_base);
     }
-    if configure.reset_fingerprint {
+    if configure.new_identity {
+        if let Err(err) = crate::cyberdesk_tunnel::generate_new_identity() {
+            eprintln!("failed to generate new Cyberdriver identity: {err}");
+            std::process::exit(1);
+        }
+    } else if configure.reset_fingerprint {
         if let Err(err) = crate::cyberdesk_tunnel::reset_fingerprint() {
             eprintln!("failed to reset Cyberdriver fingerprint: {err}");
             std::process::exit(1);
@@ -397,6 +418,18 @@ fn reset_fingerprint() {
     }
 }
 
+fn generate_new_identity() {
+    match crate::cyberdesk_tunnel::generate_new_identity() {
+        Ok(id) => println!(
+            "Cyberdriver identity reset. New RustDesk peer ID: {id}. A new Cyberdesk fingerprint will be generated on next tunnel start."
+        ),
+        Err(err) => {
+            eprintln!("failed to generate new Cyberdriver identity: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn print_status() {
     let api_key = crate::cyberdesk_tunnel::configured_api_key();
     let fingerprint = crate::cyberdesk_tunnel::current_fingerprint();
@@ -421,6 +454,10 @@ fn print_status() {
         "  fingerprint: {}",
         fingerprint.as_deref().unwrap_or("not generated")
     );
+    println!(
+        "  rustdesk peer id: {}",
+        hbb_common::config::Config::get_id()
+    );
 }
 
 fn print_config() {
@@ -434,6 +471,7 @@ fn print_config() {
         "rendezvous_server": hbb_common::config::Config::get_option("custom-rendezvous-server"),
         "relay_server": hbb_common::config::Config::get_option("relay-server"),
         "fingerprint": crate::cyberdesk_tunnel::current_fingerprint(),
+        "rustdesk_peer_id": hbb_common::config::Config::get_id(),
         "machine_name": machine_name_from_env(),
         "remote_keepalive_for": crate::cyberdesk_tunnel::configured_remote_keepalive_for(),
         "config_path": crate::cyberdesk_tunnel::config_path().display().to_string(),
@@ -568,10 +606,11 @@ fn print_help() {
         r#"Cyberdriver
 
 Usage:
-  cyberdriver join --secret <ak_*> [--name <name>] [--keepalive] [--api-base <ws-or-http-base>] [--register-as-keepalive-for <machine-id>] [--allow-insecure-api-base]
+  cyberdriver join --secret <ak_*> [--name <name>] [--keepalive] [--new-identity] [--api-base <ws-or-http-base>] [--register-as-keepalive-for <machine-id>] [--allow-insecure-api-base]
   cyberdriver status
   cyberdriver health
   cyberdriver config-print
+  cyberdriver new-identity
   cyberdriver reset-fingerprint
   cyberdriver stop
   cyberdriver logs [--path <file>] [--tail <bytes>] [--follow]
@@ -586,12 +625,14 @@ fn print_join_help() {
         r#"Cyberdriver join
 
 Usage:
-  cyberdriver join --secret <ak_*> [--name <name>] [--keepalive] [--env prod|dev] [--api-base <ws-or-http-base>] [--register-as-keepalive-for <machine-id>] [--allow-insecure-api-base]
+  cyberdriver join --secret <ak_*> [--name <name>] [--keepalive] [--new-identity] [--env prod|dev] [--api-base <ws-or-http-base>] [--register-as-keepalive-for <machine-id>] [--allow-insecure-api-base]
 
 Options:
   --secret <ak_*>          Cyberdesk API key.
   --name <name>            Optional machine name sent as X-CYBERDRIVER-NAME.
                            Printable ASCII only, max 128 chars, not persisted.
+  --new-identity           Generate a new RustDesk peer ID/keypair and Cyberdesk
+                           fingerprint before joining. Use this for AMI/template clones.
   --keepalive              Enable Cyberdesk keepalive. This is the default, but
                            the flag is useful for explicit AMI/bootstrap scripts.
   --no-keepalive           Disable Cyberdesk keepalive.
@@ -728,6 +769,8 @@ fn is_known_option(value: &str) -> bool {
             | "--dev"
             | "--keepalive"
             | "--no-keepalive"
+            | "--new-identity"
+            | "--reset-identity"
             | "--api-base"
             | "--register-as-keepalive-for"
             | "--host"
@@ -820,7 +863,7 @@ mod tests {
             "--api-base".to_string(),
             "--api-key".to_string(),
             "ak_test".to_string(),
-            "--reset-fingerprint".to_string(),
+            "--new-identity".to_string(),
         ];
         assert_eq!(option_value(&args, "--api-base"), None);
         assert_eq!(option_value(&args, "--api-key"), Some("ak_test".to_string()));

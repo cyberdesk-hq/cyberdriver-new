@@ -934,6 +934,21 @@ pub fn main_change_id(new_id: String) {
     change_id(new_id)
 }
 
+pub fn main_generate_new_identity() -> String {
+    #[cfg(not(feature = "cyberdesk"))]
+    {
+        return String::new();
+    }
+    #[cfg(feature = "cyberdesk")]
+    match crate::cyberdesk_tunnel::generate_new_identity() {
+        Ok(id) => id,
+        Err(err) => {
+            log::error!("failed to generate new Cyberdriver identity: {err}");
+            String::new()
+        }
+    }
+}
+
 pub fn main_get_async_status() -> String {
     get_async_job_status()
 }

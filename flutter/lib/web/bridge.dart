@@ -746,6 +746,10 @@ class RustdeskImpl {
     throw UnimplementedError("mainChangeId");
   }
 
+  Future<String> mainGenerateNewIdentity({dynamic hint}) {
+    throw UnimplementedError("mainGenerateNewIdentity");
+  }
+
   Future<String> mainGetAsyncStatus({dynamic hint}) {
     throw UnimplementedError("mainGetAsyncStatus");
   }

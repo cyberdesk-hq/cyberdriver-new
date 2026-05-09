@@ -63,6 +63,7 @@ fn parse_json<T: for<'de> serde::Deserialize<'de>>(body: &[u8]) -> Result<T> {
 /// is the correct default for client-mode installs (the laptop case)
 /// and for any build that doesn't want Cyberdesk control.
 pub fn spawn_if_enabled() {
+    maybe_reset_identity_from_env();
     maybe_reset_fingerprint_from_env();
 
     let api_key = match configured_api_key() {
@@ -78,13 +79,9 @@ pub fn spawn_if_enabled() {
 
     let api_base = configured_api_base();
 
-    let fingerprint =
-        std::env::var("CYBERDESK_FINGERPRINT").unwrap_or_else(|_| persistent_fingerprint());
-
     log::info!(
-        "cyberdesk_tunnel: spawning tunnel client (api_base={}, fingerprint={})",
-        api_base,
-        fingerprint
+        "cyberdesk_tunnel: spawning tunnel client (api_base={})",
+        api_base
     );
     internal::spawn_keepalive_loop();
 
@@ -95,6 +92,8 @@ pub fn spawn_if_enabled() {
         let mut max_backoff_failures = 0_u8;
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
+            let fingerprint =
+                std::env::var("CYBERDESK_FINGERPRINT").unwrap_or_else(|_| persistent_fingerprint());
             let machine_name = crate::cyberdesk_cli::machine_name_from_env();
             let remote_keepalive_for = configured_remote_keepalive_for();
             let result = client::run(
@@ -308,6 +307,36 @@ pub fn reset_fingerprint() -> Result<()> {
         return Err(err);
     }
     Ok(())
+}
+
+pub fn generate_new_identity() -> Result<String> {
+    reset_fingerprint()?;
+    match config::Config::generate_new_identity_id() {
+        Some(id) => {
+            log::info!("cyberdesk_tunnel: generated new Cyberdriver identity id {}", id);
+            Ok(id)
+        }
+        None => bail!("failed to generate new Cyberdriver identity id"),
+    }
+}
+
+fn maybe_reset_identity_from_env() {
+    if matches!(
+        std::env::var("CYBERDRIVER_NEW_IDENTITY")
+            .or_else(|_| std::env::var("CYBERDRIVER_RESET_IDENTITY")),
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
+    ) {
+        match generate_new_identity() {
+            Ok(id) => log::info!(
+                "cyberdesk_tunnel: generated new identity from environment; rustdesk_peer_id={id}"
+            ),
+            Err(err) => log::error!(
+                "cyberdesk_tunnel: failed to generate new identity from environment: {err}"
+            ),
+        }
+        std::env::remove_var("CYBERDRIVER_NEW_IDENTITY");
+        std::env::remove_var("CYBERDRIVER_RESET_IDENTITY");
+    }
 }
 
 fn maybe_reset_fingerprint_from_env() {
