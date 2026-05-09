@@ -269,6 +269,7 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
   Timer? _metadataTimer;
   final _searchController = TextEditingController();
   String _searchText = '';
+  String _refreshError = '';
   bool _pullingPeers = false;
   bool _refreshing = false;
 
@@ -311,7 +312,17 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
       await gFFI.abModel
           .pullAb(force: ForcePullAb.listAndCurrent, quiet: !showSpinner);
       if (mounted) {
+        setState(() {
+          _refreshError = '';
+        });
         _queryOnlineStates();
+      }
+    } catch (e) {
+      debugPrint('Failed to refresh desktops: $e');
+      if (mounted) {
+        setState(() {
+          _refreshError = 'Failed to load desktops. Please try again.';
+        });
       }
     } finally {
       _pullingPeers = false;
@@ -442,6 +453,14 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
       return Center(
         child: Text(
           translate('Loading...'),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    if (allDesktops.isEmpty && _refreshError.isNotEmpty) {
+      return Center(
+        child: Text(
+          _refreshError,
           textAlign: TextAlign.center,
         ),
       );
