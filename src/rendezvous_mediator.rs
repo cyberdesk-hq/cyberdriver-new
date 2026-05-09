@@ -689,7 +689,15 @@ impl RendezvousMediator {
             no_register_device: Config::no_register_device(),
             ..Default::default()
         });
+        let sent_over_udp = matches!(&socket, Sink::Framed(_, _));
         socket.send(&msg_out).await?;
+        if sent_over_udp {
+            // Fly UDP occasionally delivers the register_pk request while the OK
+            // response is lost. Allow the normal RegisterPeer path to continue;
+            // hbbs will request the key again if it did not persist this one.
+            Config::set_key_confirmed(true);
+            Config::set_host_key_confirmed(&self.host_prefix, true);
+        }
         SENT_REGISTER_PK.store(true, Ordering::SeqCst);
         Ok(())
     }
