@@ -238,10 +238,11 @@ class UserModel {
       throw RequestException(0, body['error']);
     }
 
-    return getLoginResponseFromAuthBody(body);
+    return await getLoginResponseFromAuthBody(body);
   }
 
-  LoginResponse getLoginResponseFromAuthBody(Map<String, dynamic> body) {
+  Future<LoginResponse> getLoginResponseFromAuthBody(
+      Map<String, dynamic> body) async {
     final LoginResponse loginResponse;
     try {
       loginResponse = LoginResponse.fromJson(body);
