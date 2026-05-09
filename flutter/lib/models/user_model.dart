@@ -154,11 +154,9 @@ class UserModel {
     isAdmin.value = user.isAdmin;
     organizations.value = user.organizations;
     selectedOrganizationId.value = user.selectedOrganizationId;
-    if (selectedOrganizationId.value.isNotEmpty) {
-      await bind.mainSetLocalOption(
-          key: 'cyberdesk_selected_organization_id',
-          value: selectedOrganizationId.value);
-    }
+    await bind.mainSetLocalOption(
+        key: 'cyberdesk_selected_organization_id',
+        value: selectedOrganizationId.value);
     await bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(user));
     if (isWeb) {
       // ugly here, tmp solution
