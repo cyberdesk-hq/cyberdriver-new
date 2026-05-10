@@ -257,6 +257,7 @@ pub enum Data {
     UserSid(Option<u32>),
     OnlineStatus(Option<(i64, bool)>),
     Config((String, Option<String>)),
+    LocalConfig((String, Option<String>)),
     Options(Option<HashMap<String, String>>),
     NatType(Option<i32>),
     ConfirmedKey(Option<(Vec<u8>, Vec<u8>)>),
@@ -722,6 +723,36 @@ async fn handle(data: Data, stream: &mut Connection) {
                 }
             }
         },
+        Data::LocalConfig((name, value)) => match value {
+            None => {
+                allow_err!(
+                    stream
+                        .send(&Data::LocalConfig((
+                            name.clone(),
+                            Some(get_local_option(name))
+                        )))
+                        .await
+                );
+            }
+            Some(value) => {
+                #[cfg(feature = "cyberdesk")]
+                if name == "cyberdesk_api_key" {
+                    if value.trim().is_empty() {
+                        set_local_option(name, String::new());
+                    } else if let Err(message) =
+                        crate::cyberdesk_tunnel::store_configured_api_key(value)
+                    {
+                        log::error!(
+                            "failed to store service-profile Cyberdesk API key: {message}"
+                        );
+                    }
+                } else {
+                    set_local_option(name, value);
+                }
+                #[cfg(not(feature = "cyberdesk"))]
+                set_local_option(name, value);
+            }
+        },
         Data::Options(value) => match value {
             None => {
                 let v = Config::get_options();
@@ -1155,6 +1186,17 @@ pub async fn set_config_async(name: &str, value: String) -> ResultType<()> {
     let mut c = connect(1000, "").await?;
     c.send_config(name, value).await?;
     Ok(())
+}
+
+pub async fn set_local_config_async(name: &str, value: String) -> ResultType<()> {
+    let mut c = connect(1000, "").await?;
+    c.send(&Data::LocalConfig((name.to_owned(), Some(value)))).await?;
+    Ok(())
+}
+
+#[tokio::main(flavor = "current_thread")]
+pub async fn set_local_config(name: &str, value: String) -> ResultType<()> {
+    set_local_config_async(name, value).await
 }
 
 #[tokio::main(flavor = "current_thread")]

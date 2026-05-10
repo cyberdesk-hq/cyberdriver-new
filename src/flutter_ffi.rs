@@ -1172,6 +1172,7 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
     if key == "cyberdesk_api_key" {
         if value.trim().is_empty() {
             set_local_option(key, String::new());
+            sync_cyberdesk_local_option_to_service("cyberdesk_api_key", String::new());
             return true;
         } else if let Err(message) =
             crate::cyberdesk_tunnel::store_configured_api_key(value.clone())
@@ -1179,11 +1180,16 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
             log::error!("refusing to store Cyberdesk API key without encryption: {message}");
             return false;
         } else {
+            sync_cyberdesk_local_option_to_service("cyberdesk_api_key", value);
             return true;
         }
     }
 
-    set_local_option(key, value.clone());
+    set_local_option(key.clone(), value.clone());
+    #[cfg(feature = "cyberdesk")]
+    if key.starts_with("cyberdesk_") {
+        sync_cyberdesk_local_option_to_service(&key, value.clone());
+    }
     if is_texture_render_key {
         let session_event = [("v", &value)];
         for session in sessions::get_sessions() {
@@ -1198,6 +1204,22 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
         }
     }
     true
+}
+
+#[cfg(feature = "cyberdesk")]
+fn sync_cyberdesk_local_option_to_service(key: &str, value: String) {
+    #[cfg(windows)]
+    if crate::platform::is_installed() {
+        if let Err(err) = crate::ipc::set_local_config(key, value) {
+            log::warn!(
+                "failed to sync Cyberdesk local option {key} to Windows service profile: {err}"
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (key, value);
+    }
 }
 
 // We do use use `main_get_local_option` and `main_set_local_option`.
