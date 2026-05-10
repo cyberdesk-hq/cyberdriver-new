@@ -738,14 +738,19 @@ async fn handle(data: Data, stream: &mut Connection) {
                 #[cfg(feature = "cyberdesk")]
                 if name == "cyberdesk_api_key" {
                     if value.trim().is_empty() {
-                        set_local_option(name, String::new());
+                        crate::cyberdesk_tunnel::clear_configured_api_key();
                     } else if let Err(message) =
                         crate::cyberdesk_tunnel::store_configured_api_key(value)
                     {
                         log::error!(
                             "failed to store service-profile Cyberdesk API key: {message}"
                         );
+                    } else {
+                        crate::cyberdesk_tunnel::spawn_if_enabled();
                     }
+                } else if name == "cyberdesk_api_base" {
+                    crate::cyberdesk_tunnel::store_configured_api_base(value);
+                    crate::cyberdesk_tunnel::spawn_if_enabled();
                 } else {
                     set_local_option(name, value);
                 }

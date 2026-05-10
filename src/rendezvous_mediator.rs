@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -37,6 +38,7 @@ lazy_static::lazy_static! {
     static ref SOLVING_PK_MISMATCH: Mutex<String> = Default::default();
     static ref LAST_MSG: Mutex<(SocketAddr, Instant)> = Mutex::new((SocketAddr::new([0; 4].into(), 0), Instant::now()));
     static ref LAST_RELAY_MSG: Mutex<(SocketAddr, Instant)> = Mutex::new((SocketAddr::new([0; 4].into(), 0), Instant::now()));
+    static ref SENT_REGISTER_PK_HOSTS: Mutex<HashSet<String>> = Default::default();
 }
 static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 static MANUAL_RESTARTED: AtomicBool = AtomicBool::new(false);
@@ -698,6 +700,10 @@ impl RendezvousMediator {
             Config::set_key_confirmed(true);
             Config::set_host_key_confirmed(&self.host_prefix, true);
         }
+        SENT_REGISTER_PK_HOSTS
+            .lock()
+            .await
+            .insert(self.host_prefix.clone());
         SENT_REGISTER_PK.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -723,9 +729,16 @@ impl RendezvousMediator {
             return Ok(());
         }
         drop(solving);
-        if !Config::get_key_confirmed() || !Config::get_host_key_confirmed(&self.host_prefix) {
+        let sent_register_pk_to_host = SENT_REGISTER_PK_HOSTS
+            .lock()
+            .await
+            .contains(&self.host_prefix);
+        if !sent_register_pk_to_host
+            || !Config::get_key_confirmed()
+            || !Config::get_host_key_confirmed(&self.host_prefix)
+        {
             log::info!(
-                "register_pk of {} due to key not confirmed",
+                "register_pk of {} due to key not confirmed or not sent in this process",
                 self.host_prefix
             );
             return self.register_pk(socket).await;

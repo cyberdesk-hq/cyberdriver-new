@@ -1171,7 +1171,7 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
     #[cfg(feature = "cyberdesk")]
     if key == "cyberdesk_api_key" {
         if value.trim().is_empty() {
-            set_local_option(key, String::new());
+            crate::cyberdesk_tunnel::clear_configured_api_key();
             sync_cyberdesk_local_option_to_service("cyberdesk_api_key", String::new());
             return true;
         } else if let Err(message) =
@@ -1183,6 +1183,12 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
             sync_cyberdesk_local_option_to_service("cyberdesk_api_key", value);
             return true;
         }
+    }
+    #[cfg(feature = "cyberdesk")]
+    if key == "cyberdesk_api_base" {
+        crate::cyberdesk_tunnel::store_configured_api_base(value.clone());
+        sync_cyberdesk_local_option_to_service("cyberdesk_api_base", value);
+        return true;
     }
 
     set_local_option(key.clone(), value.clone());
@@ -1216,7 +1222,17 @@ fn sync_cyberdesk_local_option_to_service(key: &str, value: String) {
             );
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(any(target_os = "android", target_os = "ios"))))]
+    {
+        if crate::platform::is_installed() {
+            if let Err(err) = crate::ipc::set_local_config(key, value) {
+                log::warn!(
+                    "failed to sync Cyberdesk local option {key} to server process: {err}"
+                );
+            }
+        }
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _ = (key, value);
     }

@@ -20,7 +20,14 @@ use hbb_common::{
     password_security::{decrypt_str_or_original, encrypt_str_or_original},
 };
 use serde_derive::{Deserialize, Serialize};
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Mutex,
+    },
+    time::Duration,
+};
 
 mod client;
 mod dispatch;
@@ -34,6 +41,11 @@ mod shell;
 const API_KEY_ENC_VERSION: &str = "00";
 const API_KEY_MAX_LEN: usize = 4096;
 pub const REMOTE_KEEPALIVE_FOR_OPTION: &str = "cyberdesk_remote_keepalive_for";
+
+static TUNNEL_CONFIG_REVISION: AtomicU64 = AtomicU64::new(0);
+static TUNNEL_TASK_ACTIVE: AtomicBool = AtomicBool::new(false);
+static TUNNEL_CONFIG_CHANGE_TX: Mutex<Option<hbb_common::tokio::sync::watch::Sender<u64>>> =
+    Mutex::new(None);
 
 fn path_without_query(path: &str) -> &str {
     path.split_once('?').map(|(path, _)| path).unwrap_or(path)
@@ -66,24 +78,32 @@ pub fn spawn_if_enabled() {
     maybe_reset_identity_from_env();
     maybe_reset_fingerprint_from_env();
 
-    let api_key = match configured_api_key() {
-        Some(k) => k,
-        _ => {
-            log::info!(
-                "cyberdesk_tunnel: API key not set; tunnel disabled (this is fine for \
-                 client-mode installs)"
-            );
-            return;
-        }
-    };
+    if configured_api_key().is_none() {
+        log::info!(
+            "cyberdesk_tunnel: API key not set; tunnel disabled (this is fine for \
+             client-mode installs)"
+        );
+        return;
+    }
 
     let api_base = configured_api_base();
+
+    if TUNNEL_TASK_ACTIVE.swap(true, Ordering::SeqCst) {
+        log::info!("cyberdesk_tunnel: tunnel task already running; signaling config change");
+        signal_tunnel_config_changed();
+        return;
+    }
 
     log::info!(
         "cyberdesk_tunnel: spawning tunnel client (api_base={})",
         api_base
     );
     internal::spawn_keepalive_loop();
+    let (config_change_tx, mut config_change_rx) =
+        hbb_common::tokio::sync::watch::channel(TUNNEL_CONFIG_REVISION.load(Ordering::SeqCst));
+    if let Ok(mut tx) = TUNNEL_CONFIG_CHANGE_TX.lock() {
+        *tx = Some(config_change_tx);
+    }
 
     // Schedule onto RustDesk's existing tokio runtime via hbb_common's
     // re-export. We deliberately do NOT create a new runtime here.
@@ -92,19 +112,42 @@ pub fn spawn_if_enabled() {
         let mut max_backoff_failures = 0_u8;
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
+            let Some(api_key) = configured_api_key() else {
+                log::info!("cyberdesk_tunnel: API key cleared; tunnel idle until reconfigured");
+                if config_change_rx.changed().await.is_err() {
+                    break;
+                }
+                backoff = Duration::from_secs(1);
+                max_backoff_failures = 0;
+                continue;
+            };
+            let api_base = configured_api_base();
             let fingerprint =
                 std::env::var("CYBERDESK_FINGERPRINT").unwrap_or_else(|_| persistent_fingerprint());
             let machine_name = crate::cyberdesk_cli::machine_name_from_env();
             let remote_keepalive_for = configured_remote_keepalive_for();
-            let result = client::run(
-                api_key.clone(),
-                api_base.clone(),
-                fingerprint.clone(),
-                machine_name,
-                remote_keepalive_for,
-                dispatch_semaphore.clone(),
-            )
-            .await;
+            let result = hbb_common::tokio::select! {
+                result = client::run(
+                    api_key.clone(),
+                    api_base.clone(),
+                    fingerprint.clone(),
+                    machine_name,
+                    remote_keepalive_for,
+                    dispatch_semaphore.clone(),
+                ) => result,
+                changed = config_change_rx.changed() => {
+                    if changed.is_err() {
+                        log::info!("cyberdesk_tunnel: config change channel closed; reconnecting");
+                    } else if configured_api_key().is_none() {
+                        log::info!("cyberdesk_tunnel: API key cleared; closing active tunnel");
+                    } else {
+                        log::info!("cyberdesk_tunnel: config changed; reconnecting active tunnel");
+                    }
+                    backoff = Duration::from_secs(1);
+                    max_backoff_failures = 0;
+                    continue;
+                }
+            };
             let mut retry_after = None;
             match &result {
                 Ok(()) => {
@@ -147,7 +190,20 @@ pub fn spawn_if_enabled() {
                 backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
             }
         }
+        TUNNEL_TASK_ACTIVE.store(false, Ordering::SeqCst);
+        if let Ok(mut tx) = TUNNEL_CONFIG_CHANGE_TX.lock() {
+            *tx = None;
+        }
     });
+}
+
+fn signal_tunnel_config_changed() {
+    let revision = TUNNEL_CONFIG_REVISION.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Ok(tx) = TUNNEL_CONFIG_CHANGE_TX.lock() {
+        if let Some(tx) = tx.as_ref() {
+            let _ = tx.send(revision);
+        }
+    }
 }
 
 fn jittered_backoff(base: Duration) -> Duration {
@@ -232,7 +288,13 @@ pub(crate) fn store_configured_api_key(api_key: String) -> Result<(), &'static s
         return Err("Cyberdesk API key is too large to store securely");
     }
     config::LocalConfig::set_option("cyberdesk_api_key".to_string(), encrypted);
+    signal_tunnel_config_changed();
     Ok(())
+}
+
+pub(crate) fn clear_configured_api_key() {
+    config::LocalConfig::set_option("cyberdesk_api_key".to_string(), String::new());
+    signal_tunnel_config_changed();
 }
 
 pub(crate) fn configured_api_base() -> String {
@@ -254,6 +316,7 @@ pub(crate) fn configured_api_base() -> String {
 
 pub(crate) fn store_configured_api_base(api_base: String) {
     config::LocalConfig::set_option("cyberdesk_api_base".to_string(), api_base);
+    signal_tunnel_config_changed();
 }
 
 pub(crate) fn configured_remote_keepalive_for() -> Option<String> {
