@@ -435,19 +435,30 @@ fn normalize_key_token(raw: &str) -> String {
 
 fn modifier_key(token: &str) -> Option<ControlKey> {
     match token {
-        "ctrl" | "control" | "ctl" | "leftctrl" | "ctrlleft" | "lctrl" | "lcontrol" => {
-            Some(ControlKey::Control)
+        "ctrl" | "control" | "ctl" | "leftctrl" | "left_ctrl" | "ctrlleft" | "ctrl_left"
+        | "lctrl" | "l_ctrl" | "lcontrol" | "l_control" => Some(ControlKey::Control),
+        "rightctrl" | "right_ctrl" | "ctrlright" | "ctrl_right" | "rctrl" | "r_ctrl"
+        | "rcontrol" | "r_control" => Some(ControlKey::RControl),
+        "alt" | "option" | "opt" | "leftalt" | "left_alt" | "altleft" | "alt_left" | "lalt"
+        | "l_alt" => Some(ControlKey::Alt),
+        "rightalt" | "right_alt" | "altright" | "alt_right" | "ralt" | "r_alt" => {
+            Some(ControlKey::RAlt)
         }
-        "rightctrl" | "ctrlright" | "rctrl" | "rcontrol" => Some(ControlKey::RControl),
-        "alt" | "option" | "opt" | "leftalt" | "altleft" | "lalt" => Some(ControlKey::Alt),
-        "rightalt" | "altright" | "ralt" => Some(ControlKey::RAlt),
-        "shift" | "leftshift" | "shiftleft" | "lshift" => Some(ControlKey::Shift),
-        "rightshift" | "shiftright" | "rshift" => Some(ControlKey::RShift),
+        "shift" | "leftshift" | "left_shift" | "shiftleft" | "shift_left" | "lshift"
+        | "l_shift" => Some(ControlKey::Shift),
+        "rightshift" | "right_shift" | "shiftright" | "shift_right" | "rshift" | "r_shift" => {
+            Some(ControlKey::RShift)
+        }
         "win" | "windows" | "window" | "meta" | "super" | "cmd" | "command" | "leftwin"
-        | "winleft" | "lwin" | "leftwindows" | "windowsleft" | "leftcmd" | "cmdleft"
-        | "leftcommand" | "commandleft" => Some(ControlKey::Meta),
-        "rightwin" | "winright" | "rwin" | "rightwindows" | "windowsright" | "rightcmd"
-        | "cmdright" | "rightcommand" | "commandright" => Some(ControlKey::RWin),
+        | "left_win" | "winleft" | "win_left" | "lwin" | "l_win" | "leftwindows"
+        | "left_windows" | "windowsleft" | "windows_left" | "leftcmd" | "left_cmd" | "cmdleft"
+        | "cmd_left" | "leftcommand" | "left_command" | "commandleft" | "command_left" => {
+            Some(ControlKey::Meta)
+        }
+        "rightwin" | "right_win" | "winright" | "win_right" | "rwin" | "r_win" | "rightwindows"
+        | "right_windows" | "windowsright" | "windows_right" | "rightcmd" | "right_cmd"
+        | "cmdright" | "cmd_right" | "rightcommand" | "right_command" | "commandright"
+        | "command_right" => Some(ControlKey::RWin),
         _ => None,
     }
 }
@@ -594,7 +605,9 @@ mod tests {
 
     #[test]
     fn parses_standalone_windows_modifier_aliases() {
-        for alias in ["win", "windows", "window", "meta", "super", "cmd", "command"] {
+        for alias in [
+            "win", "windows", "window", "meta", "super", "cmd", "command",
+        ] {
             assert_eq!(control_key(alias), ControlKey::Meta, "{alias}");
         }
     }
