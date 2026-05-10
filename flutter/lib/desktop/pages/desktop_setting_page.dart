@@ -6,9 +6,12 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/common/cyberdesk_environment.dart';
+import 'package:flutter_hbb/common/hbbs/hbbs.dart';
 import 'package:flutter_hbb/common/widgets/audio_input.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter_hbb/consts.dart';
+import 'package:flutter_hbb/cyberdesk_branding.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
@@ -845,7 +848,7 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
                 password(context),
                 _Card(title: '2FA', children: [tfa()]),
                 if (!isChangeIdDisabled())
-                  _Card(title: 'ID', children: [changeId()]),
+                  _Card(title: 'Identity', children: [generateIdentity()]),
                 more(context),
               ]),
             ),
@@ -972,13 +975,9 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
     return tmpWrapper();
   }
 
-  Widget changeId() {
-    return ChangeNotifierProvider.value(
-        value: gFFI.serverModel,
-        child: Consumer<ServerModel>(builder: ((context, model, child) {
-          return _Button('Change ID', changeIdDialog,
-              enabled: !locked && model.connectStatus > 0);
-        })));
+  Widget generateIdentity() {
+    return _Button('Generate new identity', generateIdentityDialog,
+        enabled: !locked);
   }
 
   Widget permissions(context) {
@@ -1541,8 +1540,30 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
   bool locked = !isWeb && bind.mainIsInstalled();
+  final _cyberdeskApiKeyController = TextEditingController();
+  final _remoteKeepaliveForController = TextEditingController();
+  bool _cyberdeskApiKeyObscured = true;
 
   final scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    final remoteKeepaliveFor =
+        bind.mainGetLocalOption(key: 'cyberdesk_remote_keepalive_for').trim();
+    if (remoteKeepaliveFor.isNotEmpty) {
+      _remoteKeepaliveForController.text = remoteKeepaliveFor;
+    }
+    _ensureDefaultCyberdeskEnvironment();
+  }
+
+  @override
+  void dispose() {
+    _cyberdeskApiKeyController.dispose();
+    _remoteKeepaliveForController.dispose();
+    scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1559,6 +1580,77 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
         ]),
       ),
     ]).marginOnly(bottom: _kListViewBottomMargin);
+  }
+
+  String _currentCyberdeskEnvironment() {
+    final configuredEnvironment =
+        bind.mainGetLocalOption(key: 'cyberdesk_environment');
+    if (configuredEnvironment == 'custom') {
+      return 'custom';
+    }
+    if (configuredEnvironment == 'production' ||
+        configuredEnvironment.isEmpty) {
+      return 'production';
+    }
+    final idServer = bind.mainGetOptionSync(key: 'custom-rendezvous-server');
+    final relayServer = bind.mainGetOptionSync(key: 'relay-server');
+    final apiServer = bind.mainGetOptionSync(key: 'api-server');
+    final key = bind.mainGetOptionSync(key: 'key');
+    final developerMode =
+        bind.mainGetLocalOption(key: 'cyberdesk_developer_mode') == 'Y';
+    if (developerMode &&
+        idServer == CyberdeskBranding.devRendezvousServer &&
+        relayServer == CyberdeskBranding.devRelayServer &&
+        apiServer == CyberdeskBranding.devApiServer &&
+        key == CyberdeskBranding.devHbbsPubkey) {
+      return 'development';
+    }
+    if (idServer == CyberdeskBranding.prodRendezvousServer &&
+        relayServer == CyberdeskBranding.prodRelayServer &&
+        apiServer == CyberdeskBranding.prodApiServer &&
+        key == CyberdeskBranding.prodHbbsPubkey) {
+      return 'production';
+    }
+    return 'custom';
+  }
+
+  Future<void> _ensureDefaultCyberdeskEnvironment() async {
+    await ensureDefaultCyberdeskEnvironment();
+  }
+
+  Future<void> _applyCyberdeskEnvironment(String value) async {
+    await applyCyberdeskEnvironment(value);
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _copyCyberdeskDiagnostics() async {
+    final payload = {
+      'app': CyberdeskBranding.appName,
+      'api_key_configured':
+          bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty,
+      'api_base': bind.mainGetLocalOption(key: 'cyberdesk_api_base'),
+      'environment': bind.mainGetLocalOption(key: 'cyberdesk_environment'),
+      'desktop_api_server': bind.mainGetOptionSync(key: 'api-server'),
+      'rendezvous_server':
+          bind.mainGetOptionSync(key: 'custom-rendezvous-server'),
+      'relay_server': bind.mainGetOptionSync(key: 'relay-server'),
+      'rustdesk_peer_id': gFFI.serverModel.serverId.text,
+      'keepalive_enabled':
+          bind.mainGetLocalOption(key: 'cyberdesk_keepalive_enabled') != 'N',
+      'service_status': stateGlobal.svcStatus.value.toString(),
+      'macos_permissions': {
+        if (isMacOS)
+          'screen_recording': bind.mainIsCanScreenRecording(prompt: false),
+        if (isMacOS) 'accessibility': bind.mainIsProcessTrusted(prompt: false),
+        if (isMacOS)
+          'input_monitoring': bind.mainIsCanInputMonitoring(prompt: false),
+      },
+    };
+    await Clipboard.setData(ClipboardData(
+        text: const JsonEncoder.withIndent('  ').convert(payload)));
+    showToast(translate('Copied'));
   }
 
   Widget network(BuildContext context) {
@@ -1650,6 +1742,12 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
     final outgoingOnly = bind.isOutgoingOnly();
 
     final divider = const Divider(height: 1, indent: 16, endIndent: 16);
+    final cyberdeskApiKeyConfigured =
+        bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
+    final keepaliveEnabled =
+        bind.mainGetLocalOption(key: 'cyberdesk_keepalive_enabled') != 'N';
+    final developerMode =
+        bind.mainGetLocalOption(key: 'cyberdesk_developer_mode') == 'Y';
     return _Card(
       title: 'Network',
       children: [
@@ -1657,6 +1755,227 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              listTile(
+                icon: Icons.tune_outlined,
+                title: 'Cyberdesk environment',
+                showTooltip: true,
+                tooltipMessage:
+                    'Production is the default for customers. Enable Developer mode below to reveal the internal Development preset, or use Custom for manual host overrides.',
+                trailing: DropdownButton<String>(
+                  value: _currentCyberdeskEnvironment(),
+                  underline: const SizedBox.shrink(),
+                  onChanged: locked
+                      ? null
+                      : (value) async {
+                          if (value != null) {
+                            await _applyCyberdeskEnvironment(value);
+                          }
+                        },
+                  items: [
+                    const DropdownMenuItem(
+                        value: 'production', child: Text('Production')),
+                    if (developerMode)
+                      const DropdownMenuItem(
+                          value: 'development',
+                          child: Text('Development (internal)')),
+                    const DropdownMenuItem(
+                        value: 'custom', child: Text('Custom')),
+                  ],
+                ),
+              ),
+              divider,
+              listTile(
+                icon: Icons.developer_mode_outlined,
+                title: 'Developer mode',
+                showTooltip: true,
+                tooltipMessage:
+                    'Internal use only. Reveals the Development environment preset for testing against Cyberdesk dev infrastructure.',
+                trailing: Switch(
+                  value: developerMode,
+                  onChanged: locked
+                      ? null
+                      : (value) async {
+                          await bind.mainSetLocalOption(
+                              key: 'cyberdesk_developer_mode',
+                              value: value ? 'Y' : '');
+                          setState(() {});
+                        },
+                ),
+              ),
+              divider,
+              listTile(
+                icon: Icons.cloud_done_outlined,
+                title: CyberdeskBranding.tunnelStatusLabel,
+                showTooltip: true,
+                tooltipMessage:
+                    'Set a Cyberdesk org API key to enable dashboard streaming and remote control. Desktop sign-in is optional and only used for desktop-to-desktop peer access.',
+                trailing: Text(
+                  cyberdeskApiKeyConfigured
+                      ? 'Configured'
+                      : CyberdeskBranding.tunnelDisabled,
+                  style: TextStyle(fontSize: _kContentFontSize),
+                ),
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: _cyberdeskApiKeyController,
+                      enabled: !locked,
+                      obscureText: _cyberdeskApiKeyObscured,
+                      decoration: InputDecoration(
+                        labelText:
+                            CyberdeskBranding.apiKeyFieldLabel,
+                        hintText: cyberdeskApiKeyConfigured
+                            ? translate('API key is configured')
+                            : 'ak_...',
+                        helperText: CyberdeskBranding.apiKeyHelpText,
+                        suffixIcon: IconButton(
+                          icon: Icon(_cyberdeskApiKeyObscured
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined),
+                          onPressed: locked
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _cyberdeskApiKeyObscured =
+                                        !_cyberdeskApiKeyObscured;
+                                  });
+                                },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        ElevatedButton(
+                          onPressed: locked
+                              ? null
+                              : () async {
+                                  final value =
+                                      _cyberdeskApiKeyController.text.trim();
+                                  if (value.isEmpty &&
+                                      !cyberdeskApiKeyConfigured) {
+                                    return;
+                                  }
+                                  if (value.isNotEmpty) {
+                                    final saved = await mainSetLocalOption(
+                                        'cyberdesk_api_key', value);
+                                    if (!saved) {
+                                      showToast(translate('Failed'));
+                                      return;
+                                    }
+                                    _cyberdeskApiKeyController.clear();
+                                  }
+                                  await start_service(true);
+                                  setState(() {});
+                                },
+                          child: const Text('Save and connect'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: locked || !cyberdeskApiKeyConfigured
+                              ? null
+                              : () async {
+                                  await bind.mainSetLocalOption(
+                                      key: 'cyberdesk_api_key', value: '');
+                                  _cyberdeskApiKeyController.clear();
+                                  setState(() {});
+                                },
+                          child: Text(translate('Clear')),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              divider,
+              listTile(
+                icon: Icons.favorite_border,
+                title: 'Cyberdesk keepalive',
+                showTooltip: true,
+                tooltipMessage:
+                    'Keeps this desktop lightly active when idle so long-running automation is less likely to be interrupted by screen locks or idle timers.',
+                trailing: Switch(
+                  value: keepaliveEnabled,
+                  onChanged: locked
+                      ? null
+                      : (value) async {
+                          await bind.mainSetLocalOption(
+                              key: 'cyberdesk_keepalive_enabled',
+                              value: value ? 'Y' : 'N');
+                          setState(() {});
+                        },
+                ),
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: _remoteKeepaliveForController,
+                      enabled: !locked,
+                      decoration: InputDecoration(
+                        labelText: 'Remote keepalive for',
+                        hintText: 'Main Cyberdesk machine ID',
+                        helperText:
+                            'Use on a host machine to keep a linked VM session active.',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        OutlinedButton(
+                          onPressed: locked
+                              ? null
+                              : () async {
+                                  await bind.mainSetLocalOption(
+                                      key: 'cyberdesk_remote_keepalive_for',
+                                      value: _remoteKeepaliveForController.text
+                                          .trim());
+                                  showToast(translate('Saved'));
+                                  setState(() {});
+                                },
+                          child: Text(translate('Save')),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: locked ||
+                                  _remoteKeepaliveForController.text.trim().isEmpty
+                              ? null
+                              : () async {
+                                  await bind.mainSetLocalOption(
+                                      key: 'cyberdesk_remote_keepalive_for',
+                                      value: '');
+                                  _remoteKeepaliveForController.clear();
+                                  setState(() {});
+                                },
+                          child: Text(translate('Clear')),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              divider,
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: locked ? null : _copyCyberdeskDiagnostics,
+                    icon: const Icon(Icons.bug_report_outlined, size: 18),
+                    label: const Text('Copy diagnostics'),
+                  ),
+                ),
+              ),
+              if (!hideServer || !hideProxy || !hideWebSocket) divider,
               if (!hideServer)
                 listTile(
                   icon: Icons.dns_outlined,
@@ -2046,6 +2365,8 @@ class _AccountState extends State<_Account> {
             ),
             child: Builder(builder: (context) {
               final avatarWidget = _buildUserAvatar();
+              final organizations =
+                  gFFI.userModel.organizations.toList(growable: false);
               return Row(
                 children: [
                   if (avatarWidget != null) avatarWidget,
@@ -2076,6 +2397,41 @@ class _AccountState extends State<_Account> {
                             ),
                           ),
                         ),
+                        if (organizations.length > 1) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            'Organization',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color:
+                                  Theme.of(context).textTheme.bodySmall?.color,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          DropdownButton<String>(
+                            key: ValueKey(
+                                gFFI.userModel.selectedOrganizationId.value),
+                            value: _selectedOrganizationDropdownValue(
+                                organizations),
+                            isDense: true,
+                            underline: const SizedBox.shrink(),
+                            onChanged: (value) async {
+                              if (value != null) {
+                                await gFFI.userModel.switchOrganization(value);
+                                if (mounted) {
+                                  setState(() {});
+                                }
+                              }
+                            },
+                            items: organizations
+                                .map((org) => DropdownMenuItem<String>(
+                                      value: org.id,
+                                      child: Text(
+                                          org.name.isEmpty ? org.id : org.name),
+                                    ))
+                                .toList(),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -2084,6 +2440,15 @@ class _AccountState extends State<_Account> {
             }),
           ),
         )).marginOnly(left: 18, top: 16);
+  }
+
+  String _selectedOrganizationDropdownValue(
+      List<CyberdeskOrganization> organizations) {
+    final selected = gFFI.userModel.selectedOrganizationId.value;
+    if (selected.isNotEmpty && organizations.any((org) => org.id == selected)) {
+      return selected;
+    }
+    return organizations.first.id;
   }
 
   Widget? _buildUserAvatar() {
@@ -2389,7 +2754,7 @@ class _AboutState extends State<_About> {
                         .marginSymmetric(vertical: 4.0)),
               InkWell(
                   onTap: () {
-                    launchUrlString('https://rustdesk.com/privacy.html');
+                    launchUrlString(CyberdeskBranding.privacyPolicyUrl);
                   },
                   child: Text(
                     translate('Privacy Statement'),
@@ -2397,7 +2762,7 @@ class _AboutState extends State<_About> {
                   ).marginSymmetric(vertical: 4.0)),
               InkWell(
                   onTap: () {
-                    launchUrlString('https://rustdesk.com');
+                    launchUrlString(CyberdeskBranding.websiteUrl);
                   },
                   child: Text(
                     translate('Website'),
@@ -2415,11 +2780,11 @@ class _AboutState extends State<_About> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Copyright © ${DateTime.now().toString().substring(0, 4)} Purslane Ltd.\n$license',
+                            'Copyright © ${DateTime.now().toString().substring(0, 4)} ${CyberdeskBranding.appCompany}\n$license',
                             style: const TextStyle(color: Colors.white),
                           ),
                           Text(
-                            translate('Slogan_tip'),
+                            CyberdeskBranding.aboutTagline,
                             style: TextStyle(
                                 fontWeight: FontWeight.w800,
                                 color: Colors.white),

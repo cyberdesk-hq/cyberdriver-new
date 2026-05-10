@@ -143,19 +143,33 @@ pub fn mouse_click(body: &[u8]) -> Result<Vec<u8>> {
     let button = mouse_button(&request.button)?;
     let clicks = validate_clicks(request.clicks)?;
 
-    if let (Some(x), Some(y)) = (request.x, request.y) {
-        send_mouse(crate::input::MOUSE_TYPE_MOVE, 0, x, y);
+    #[cfg(target_os = "macos")]
+    {
+        crate::input_service::cyberdesk_tunnel_mouse_click(
+            request.x,
+            request.y,
+            button,
+            clicks,
+            request.down,
+        );
     }
 
-    match request.down {
-        Some(true) => send_mouse(crate::input::MOUSE_TYPE_DOWN, button, 0, 0),
-        Some(false) => send_mouse(crate::input::MOUSE_TYPE_UP, button, 0, 0),
-        None => {
-            for _ in 0..clicks {
-                send_mouse(crate::input::MOUSE_TYPE_DOWN, button, 0, 0);
-                thread::sleep(MOUSE_CLICK_DELAY);
-                send_mouse(crate::input::MOUSE_TYPE_UP, button, 0, 0);
-                thread::sleep(MOUSE_CLICK_DELAY);
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let (Some(x), Some(y)) = (request.x, request.y) {
+            send_mouse(crate::input::MOUSE_TYPE_MOVE, 0, x, y);
+        }
+
+        match request.down {
+            Some(true) => send_mouse(crate::input::MOUSE_TYPE_DOWN, button, 0, 0),
+            Some(false) => send_mouse(crate::input::MOUSE_TYPE_UP, button, 0, 0),
+            None => {
+                for _ in 0..clicks {
+                    send_mouse(crate::input::MOUSE_TYPE_DOWN, button, 0, 0);
+                    thread::sleep(MOUSE_CLICK_DELAY);
+                    send_mouse(crate::input::MOUSE_TYPE_UP, button, 0, 0);
+                    thread::sleep(MOUSE_CLICK_DELAY);
+                }
             }
         }
     }
@@ -203,6 +217,15 @@ pub fn mouse_drag(body: &[u8]) -> Result<Vec<u8>> {
     thread::sleep(MOUSE_CLICK_DELAY);
     send_mouse(crate::input::MOUSE_TYPE_UP, button, 0, 0);
     empty_json()
+}
+
+pub fn perform_keepalive_tick() {
+    if let Some((x, y)) = crate::get_cursor_pos() {
+        let nudge_x = if x <= 0 { x.saturating_add(1) } else { x - 1 };
+        send_mouse(crate::input::MOUSE_TYPE_MOVE, 0, nudge_x, y);
+        thread::sleep(Duration::from_millis(50));
+        send_mouse(crate::input::MOUSE_TYPE_MOVE, 0, x, y);
+    }
 }
 
 pub fn keyboard_type(body: &[u8]) -> Result<Vec<u8>> {

@@ -2231,6 +2231,111 @@ impl Connection {
         self.video_ack_required = lr.video_ack_required;
     }
 
+    #[cfg(feature = "cyberdesk")]
+    async fn validate_cyberdesk_connection_token(&self, lr: &LoginRequest) -> bool {
+        let desktop_token = lr.cyberdesk_token.trim();
+        if desktop_token.is_empty() {
+            return false;
+        }
+        let selected_organization_id = lr.cyberdesk_selected_organization_id.trim();
+        let Some(machine_api_key) = crate::cyberdesk_tunnel::configured_api_key() else {
+            log::warn!("Cyberdesk connection token present but machine API key is not configured");
+            return false;
+        };
+        let mut api_server = Config::get_option("api-server");
+        if api_server.is_empty() {
+            api_server = crate::cyberdesk_branding::API_SERVER.to_owned();
+        }
+        if api_server.is_empty() {
+            log::warn!("Cyberdesk connection token present but API server is not configured");
+            return false;
+        }
+        if !Self::cyberdesk_api_server_allows_auth(&api_server) {
+            log::warn!(
+                "Cyberdesk connection authorization skipped: refusing to send machine API key over insecure non-loopback API server {}",
+                api_server
+            );
+            return false;
+        }
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(client) => client,
+            Err(err) => {
+                log::warn!("Cyberdesk connection authorization HTTP client setup failed: {err}");
+                return false;
+            }
+        };
+        let response = client
+            .post(format!(
+                "{}/api/cyberdriver/authorize-connection",
+                api_server.trim_end_matches('/')
+            ))
+            .json(&serde_json::json!({
+                "desktopToken": desktop_token,
+                "machineApiKey": machine_api_key,
+                "selectedOrganizationId": selected_organization_id,
+                "rustdeskPeerId": Config::get_id(),
+            }))
+            .send()
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(err) => {
+                log::warn!("Cyberdesk connection authorization request failed: {err}");
+                return false;
+            }
+        };
+        let status = response.status();
+        let body = match response.json::<serde_json::Value>().await {
+            Ok(body) => body,
+            Err(err) => {
+                log::warn!("Cyberdesk connection authorization response decode failed: {err}");
+                return false;
+            }
+        };
+        let allowed = body
+            .get("allowed")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if allowed {
+            log::info!(
+                "Cyberdesk same-org connection authorized for {}",
+                body.get("organization_id").and_then(|value| value.as_str()).unwrap_or("")
+            );
+            return true;
+        }
+        log::warn!(
+            "Cyberdesk connection authorization denied status={} reason={}",
+            status,
+            body.get("reason").and_then(|value| value.as_str()).unwrap_or("unknown")
+        );
+        false
+    }
+
+    #[cfg(feature = "cyberdesk")]
+    fn cyberdesk_api_server_allows_auth(api_server: &str) -> bool {
+        if api_server.starts_with("https://") {
+            return true;
+        }
+        if !api_server.starts_with("http://") {
+            return false;
+        }
+        let Ok(url) = url::Url::parse(api_server) else {
+            return false;
+        };
+        matches!(
+            url.host_str().map(|host| host.trim_matches(['[', ']'])),
+            Some("localhost" | "127.0.0.1" | "::1")
+        )
+    }
+
+    #[cfg(not(feature = "cyberdesk"))]
+    async fn validate_cyberdesk_connection_token(&self, _lr: &LoginRequest) -> bool {
+        false
+    }
+
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn try_start_cm_ipc(&mut self) {
         if let Some(p) = self.start_cm_ipc_para.take() {
@@ -2281,6 +2386,7 @@ impl Connection {
             if self.authorized {
                 return true;
             }
+            let cyberdesk_lr = lr.clone();
             match lr.union {
                 Some(login_request::Union::FileTransfer(ft)) => {
                     if !Self::permission(
@@ -2365,6 +2471,21 @@ impl Connection {
                         return false;
                     }
                 }
+            }
+
+            let cyberdesk_authorized = self.validate_cyberdesk_connection_token(&cyberdesk_lr).await;
+            if cyberdesk_authorized {
+                // Accepted product risk: Cyberdesk org-scoped authorization is
+                // intended to replace RustDesk's local password/click-approve
+                // gate for Cyberdesk-managed peers. Route-level permissions,
+                // privacy mode, and 2FA still run through the normal paths.
+                #[cfg(target_os = "linux")]
+                self.linux_headless_handle.wait_desktop_cm_ready().await;
+                if !self.send_logon_response_and_keep_alive().await {
+                    return false;
+                }
+                self.try_start_cm(lr.my_id, lr.my_name, self.authorized);
+                return true;
             }
 
             #[cfg(not(any(target_os = "android", target_os = "ios")))]

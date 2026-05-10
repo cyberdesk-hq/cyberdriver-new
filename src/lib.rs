@@ -48,6 +48,10 @@ mod custom_server;
 #[cfg(feature = "cyberdesk")]
 mod cyberdesk_branding;
 #[cfg(feature = "cyberdesk")]
+pub fn init_cyberdesk_branding() {
+    cyberdesk_branding::init();
+}
+#[cfg(feature = "cyberdesk")]
 pub mod cyberdesk_cli;
 #[cfg(feature = "cyberdesk")]
 pub mod cyberdesk_tunnel;

@@ -934,6 +934,21 @@ pub fn main_change_id(new_id: String) {
     change_id(new_id)
 }
 
+pub fn main_generate_new_identity() -> String {
+    #[cfg(not(feature = "cyberdesk"))]
+    {
+        return String::new();
+    }
+    #[cfg(feature = "cyberdesk")]
+    match crate::cyberdesk_tunnel::generate_new_identity() {
+        Ok(id) => id,
+        Err(err) => {
+            log::error!("failed to generate new Cyberdriver identity: {err}");
+            String::new()
+        }
+    }
+}
+
 pub fn main_get_async_status() -> String {
     get_async_job_status()
 }
@@ -1150,10 +1165,37 @@ pub fn main_set_env(key: String, value: Option<String>) -> SyncReturn<()> {
     SyncReturn(())
 }
 
-pub fn main_set_local_option(key: String, value: String) {
+pub fn main_set_local_option(key: String, value: String) -> bool {
     let is_texture_render_key = key.eq(config::keys::OPTION_TEXTURE_RENDER);
     let is_d3d_render_key = key.eq(config::keys::OPTION_ALLOW_D3D_RENDER);
-    set_local_option(key, value.clone());
+    #[cfg(feature = "cyberdesk")]
+    if key == "cyberdesk_api_key" {
+        if value.trim().is_empty() {
+            crate::cyberdesk_tunnel::clear_configured_api_key();
+            sync_cyberdesk_local_option_to_service("cyberdesk_api_key", String::new());
+            return true;
+        } else if let Err(message) =
+            crate::cyberdesk_tunnel::store_configured_api_key(value.clone())
+        {
+            log::error!("refusing to store Cyberdesk API key without encryption: {message}");
+            return false;
+        } else {
+            sync_cyberdesk_local_option_to_service("cyberdesk_api_key", value);
+            return true;
+        }
+    }
+    #[cfg(feature = "cyberdesk")]
+    if key == "cyberdesk_api_base" {
+        crate::cyberdesk_tunnel::store_configured_api_base(value.clone());
+        sync_cyberdesk_local_option_to_service("cyberdesk_api_base", value);
+        return true;
+    }
+
+    set_local_option(key.clone(), value.clone());
+    #[cfg(feature = "cyberdesk")]
+    if key.starts_with("cyberdesk_") {
+        sync_cyberdesk_local_option_to_service(&key, value.clone());
+    }
     if is_texture_render_key {
         let session_event = [("v", &value)];
         for session in sessions::get_sessions() {
@@ -1166,6 +1208,33 @@ pub fn main_set_local_option(key: String, value: String) {
         for session in sessions::get_sessions() {
             session.update_supported_decodings();
         }
+    }
+    true
+}
+
+#[cfg(feature = "cyberdesk")]
+fn sync_cyberdesk_local_option_to_service(key: &str, value: String) {
+    #[cfg(windows)]
+    if crate::platform::is_installed() {
+        if let Err(err) = crate::ipc::set_local_config(key, value) {
+            log::warn!(
+                "failed to sync Cyberdesk local option {key} to Windows service profile: {err}"
+            );
+        }
+    }
+    #[cfg(all(not(windows), not(any(target_os = "android", target_os = "ios"))))]
+    {
+        if crate::platform::is_installed() {
+            if let Err(err) = crate::ipc::set_local_config(key, value) {
+                log::warn!(
+                    "failed to sync Cyberdesk local option {key} to server process: {err}"
+                );
+            }
+        }
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = (key, value);
     }
 }
 

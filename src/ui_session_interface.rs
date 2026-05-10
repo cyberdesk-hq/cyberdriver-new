@@ -52,6 +52,8 @@ use crate::keyboard;
 use crate::{client::Data, client::Interface};
 
 const CHANGE_RESOLUTION_VALID_TIMEOUT_SECS: u64 = 15;
+const CYBERDESK_DEFAULT_WINDOWS_WIDTH: i32 = 1024;
+const CYBERDESK_DEFAULT_WINDOWS_HEIGHT: i32 = 768;
 
 #[derive(Clone, Default)]
 pub struct Session<T: InvokeUiSession> {
@@ -1543,11 +1545,24 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     #[inline]
-    fn try_change_init_resolution(&self, display: i32) {
-        let Some((w, h)) = self.lc.read().unwrap().get_custom_resolution(display) else {
+    fn try_change_init_resolution(&self, display: i32, pi: &PeerInfo) {
+        if let Some((w, h)) = self.lc.read().unwrap().get_custom_resolution(display) {
+            self.change_resolution(display, w, h);
             return;
-        };
-        self.change_resolution(display, w, h);
+        }
+        if pi.platform != "Windows" {
+            return;
+        }
+        if pi.resolutions.resolutions.iter().any(|r| {
+            r.width == CYBERDESK_DEFAULT_WINDOWS_WIDTH
+                && r.height == CYBERDESK_DEFAULT_WINDOWS_HEIGHT
+        }) {
+            self.change_resolution(
+                display,
+                CYBERDESK_DEFAULT_WINDOWS_WIDTH,
+                CYBERDESK_DEFAULT_WINDOWS_HEIGHT,
+            );
+        }
     }
 
     fn do_change_resolution(&self, display: i32, width: i32, height: i32) {
@@ -1796,7 +1811,7 @@ impl<T: InvokeUiSession> Interface for Session<T> {
                 self.msgbox("error", "Error", msg, "");
                 return;
             }
-            self.try_change_init_resolution(pi.current_display);
+            self.try_change_init_resolution(pi.current_display, &pi);
             let p = self.lc.read().unwrap().should_auto_login();
             if !p.is_empty() {
                 input_os_password(p, true, self.clone());
@@ -1926,7 +1941,10 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let (sender, mut receiver) = mpsc::unbounded_channel::<Data>();
     *handler.sender.write().unwrap() = Some(sender.clone());
-    let token = LocalConfig::get_option("access_token");
+    // Cyberdesk desktop login tokens authenticate API/account/address-book calls.
+    // hbbs does not validate them yet, and passing them here makes the client
+    // attempt hbbs secure_tcp before punch/relay, which current hbbs times out.
+    let token = "";
     let key = crate::get_key(false).await;
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if handler.is_port_forward() {
@@ -1961,7 +1979,6 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
                         queues.insert(port, sender);
                         let handler = handler.clone();
                         let key = key.clone();
-                        let token = token.clone();
                         tokio::spawn(async move {
                             start_one_port_forward(
                                 handler,
@@ -1970,7 +1987,7 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
                                 remote_port,
                                 receiver,
                                 &key,
-                                &token,
+                                token,
                             )
                             .await;
                         });

@@ -25,6 +25,8 @@ const LOGIN_ACCOUNT_AUTH: &str = "Login account auth";
 pub struct OidcAuthUrl {
     code: String,
     url: Url,
+    #[serde(default, rename = "userCode")]
+    user_code: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -109,7 +111,7 @@ pub struct AuthBody {
 
 pub struct OidcSession {
     warmed_api_server: Option<String>,
-    state_msg: &'static str,
+    state_msg: String,
     failed_msg: String,
     code_url: Option<OidcAuthUrl>,
     auth_body: Option<AuthBody>,
@@ -136,7 +138,7 @@ impl OidcSession {
     fn new() -> Self {
         Self {
             warmed_api_server: None,
-            state_msg: REQUESTING_ACCOUNT_AUTH,
+            state_msg: REQUESTING_ACCOUNT_AUTH.to_owned(),
             failed_msg: "".to_owned(),
             code_url: None,
             auth_body: None,
@@ -162,12 +164,14 @@ impl OidcSession {
         op: &str,
         id: &str,
         uuid: &str,
+        client_secret: &str,
     ) -> ResultType<HbbHttpResponse<OidcAuthUrl>> {
         Self::ensure_client(api_server);
         let body = serde_json::json!({
             "op": op,
             "id": id,
             "uuid": uuid,
+            "clientSecret": client_secret,
             "deviceInfo": crate::ui_interface::get_login_device_info(),
         })
         .to_string();
@@ -180,29 +184,29 @@ impl OidcSession {
         code: &str,
         id: &str,
         uuid: &str,
+        client_secret: &str,
     ) -> ResultType<HbbHttpResponse<AuthBody>> {
         let url = Url::parse_with_params(
             &format!("{}/api/oidc/auth-query", api_server),
             &[("code", code), ("id", id), ("uuid", uuid)],
         )?;
         Self::ensure_client(api_server);
+        let header = serde_json::json!({
+            "X-Cyberdriver-OIDC-Client-Secret": client_secret,
+        })
+        .to_string();
         #[derive(Deserialize)]
         struct HttpResponseBody {
             body: String,
         }
 
-        let resp = crate::http_request_sync(
-            url.to_string(),
-            "GET".to_owned(),
-            None,
-            "{}".to_owned(),
-        )?;
+        let resp = crate::http_request_sync(url.to_string(), "GET".to_owned(), None, header)?;
         let resp = serde_json::from_str::<HttpResponseBody>(&resp)?;
         HbbHttpResponse::parse(&resp.body)
     }
 
     fn reset(&mut self) {
-        self.state_msg = REQUESTING_ACCOUNT_AUTH;
+        self.state_msg = REQUESTING_ACCOUNT_AUTH.to_owned();
         self.failed_msg = "".to_owned();
         self.keep_querying = true;
         self.running = false;
@@ -224,11 +228,15 @@ impl OidcSession {
     }
 
     fn auth_task(api_server: String, op: String, id: String, uuid: String, remember_me: bool) {
-        let auth_request_res = Self::auth(&api_server, &op, &id, &uuid);
-        log::info!("Request oidc auth result: {:?}", &auth_request_res);
+        let client_secret = uuid::Uuid::new_v4().to_string();
+        let auth_request_res = Self::auth(&api_server, &op, &id, &uuid, &client_secret);
         let code_url = match auth_request_res {
-            Ok(HbbHttpResponse::<_>::Data(code_url)) => code_url,
+            Ok(HbbHttpResponse::<_>::Data(code_url)) => {
+                log::info!("Request oidc auth result: data");
+                code_url
+            }
             Ok(HbbHttpResponse::<_>::Error(err)) => {
+                log::warn!("Request oidc auth result: error");
                 OIDC_SESSION
                     .write()
                     .unwrap()
@@ -236,6 +244,7 @@ impl OidcSession {
                 return;
             }
             Ok(_) => {
+                log::warn!("Request oidc auth result: invalid response");
                 OIDC_SESSION
                     .write()
                     .unwrap()
@@ -243,6 +252,7 @@ impl OidcSession {
                 return;
             }
             Err(err) => {
+                log::warn!("Request oidc auth request failed");
                 OIDC_SESSION
                     .write()
                     .unwrap()
@@ -254,13 +264,13 @@ impl OidcSession {
         OIDC_SESSION
             .write()
             .unwrap()
-            .set_state(WAITING_ACCOUNT_AUTH, "".to_owned());
+            .set_state(confirmation_state_message(&code_url), "".to_owned());
         OIDC_SESSION.write().unwrap().code_url = Some(code_url.clone());
 
         let begin = Instant::now();
         let query_timeout = OIDC_SESSION.read().unwrap().query_timeout;
         while OIDC_SESSION.read().unwrap().keep_querying && begin.elapsed() < query_timeout {
-            match Self::query(&api_server, &code_url.code, &id, &uuid) {
+            match Self::query(&api_server, &code_url.code, &id, &uuid, &client_secret) {
                 Ok(HbbHttpResponse::<_>::Data(auth_body)) => {
                     if auth_body.r#type == "access_token" {
                         if remember_me {
@@ -319,8 +329,8 @@ impl OidcSession {
         // no need to handle "keep_querying == false"
     }
 
-    fn set_state(&mut self, state_msg: &'static str, failed_msg: String) {
-        self.state_msg = state_msg;
+    fn set_state(&mut self, state_msg: impl Into<String>, failed_msg: String) {
+        self.state_msg = state_msg.into();
         self.failed_msg = failed_msg;
     }
 
@@ -362,5 +372,14 @@ impl OidcSession {
 
     pub fn get_result() -> AuthResult {
         OIDC_SESSION.read().unwrap().get_result_()
+    }
+}
+
+fn confirmation_state_message(code_url: &OidcAuthUrl) -> String {
+    match code_url.user_code.as_deref() {
+        Some(user_code) if !user_code.is_empty() => {
+            format!("Enter confirmation code {user_code} in your browser")
+        }
+        _ => WAITING_ACCOUNT_AUTH.to_owned(),
     }
 }

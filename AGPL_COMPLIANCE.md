@@ -47,7 +47,7 @@ Both groups of remote users must be offered access to the modified source.
 The branded Cyberdriver binary exposes the source link in three places:
 
 1. **In-app "About" dialog** — added by the branding overlay, shows:
-   > Cyberdriver (forked from RustDesk by Cyberdesk Inc.). Licensed under
+   > Cyberdriver (forked from RustDesk by Cyberdesk, Inc). Licensed under
    > AGPL-3.0. Source code: <https://github.com/cyberdesk-hq/cyberdriver-new>
    > and <https://github.com/cyberdesk-hq/cyberdriver-server>.
 

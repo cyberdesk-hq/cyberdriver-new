@@ -20,8 +20,9 @@ use super::{
 };
 
 use futures_util::{Sink, SinkExt, StreamExt};
-use hbb_common::anyhow::{anyhow, bail, Context, Result};
+use hbb_common::anyhow::{anyhow, Context, Error, Result};
 use hbb_common::{
+    config::Config,
     log,
     tokio::{
         self,
@@ -32,21 +33,118 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
+    fmt,
     sync::Arc,
+    time::Duration,
 };
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{client::IntoClientRequest, http::HeaderValue, Message},
+    tungstenite::{
+        client::IntoClientRequest,
+        http::{HeaderValue, StatusCode},
+        Error as WsError, Message,
+    },
 };
 
-/// X-Piglet-Version header value. Mirrors what cyberdriver.py used to
-/// send so the cloud's logging + analytics treat this as a Cyberdriver
-/// agent, not a foreign client.
-const VERSION: &str = concat!("cyberdriver-rs/", env!("CARGO_PKG_VERSION"));
+/// X-Piglet-Version header value. Keep this as a plain semantic version so
+/// Cyberdesk can compare legacy Python agents and the RustDesk-based client
+/// without string-prefix special cases.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_REQUEST_BODY_BYTES: usize = 150 * 1024 * 1024;
 const MAX_IN_FLIGHT_DISPATCHES: usize = 4;
 const MAX_IDEMPOTENCY_ENTRIES: usize = 128;
 const MAX_IDEMPOTENCY_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Debug)]
+pub(super) struct RateLimited {
+    retry_after: Duration,
+}
+
+impl RateLimited {
+    fn new(retry_after: Duration) -> Self {
+        Self { retry_after }
+    }
+
+    pub(super) fn retry_after(&self) -> Duration {
+        self.retry_after
+    }
+}
+
+impl fmt::Display for RateLimited {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "cyberdesk_tunnel: server rate limited connection (close 4008; retry-after={})",
+            self.retry_after.as_secs()
+        )
+    }
+}
+
+impl std::error::Error for RateLimited {}
+
+#[derive(Debug)]
+pub(super) struct AuthRejected {
+    code: u16,
+}
+
+impl AuthRejected {
+    fn new(code: u16) -> Self {
+        Self { code }
+    }
+}
+
+impl fmt::Display for AuthRejected {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "cyberdesk_tunnel: server rejected auth (close {}); refusing to retry",
+            self.code
+        )
+    }
+}
+
+impl std::error::Error for AuthRejected {}
+
+#[derive(Debug)]
+pub(super) struct MachineLimitReached {
+    reason: String,
+}
+
+impl MachineLimitReached {
+    fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+}
+
+impl fmt::Display for MachineLimitReached {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "cyberdesk_tunnel: machine limit reached; {}",
+            self.reason
+        )
+    }
+}
+
+impl std::error::Error for MachineLimitReached {}
+
+pub(super) fn is_non_retryable_auth_error(error: &Error) -> bool {
+    if error.downcast_ref::<AuthRejected>().is_some() {
+        return true;
+    }
+    if error.downcast_ref::<MachineLimitReached>().is_some() {
+        return true;
+    }
+
+    matches!(
+        error.downcast_ref::<WsError>(),
+        Some(WsError::Http(response))
+            if response.status() == StatusCode::UNAUTHORIZED
+                || response.status() == StatusCode::FORBIDDEN
+    )
+}
 
 pub(super) fn dispatch_semaphore() -> Arc<Semaphore> {
     Arc::new(Semaphore::new(MAX_IN_FLIGHT_DISPATCHES))
@@ -58,6 +156,7 @@ pub async fn run(
     api_base: String,
     fingerprint: String,
     machine_name: Option<String>,
+    remote_keepalive_for: Option<String>,
     dispatch_semaphore: Arc<Semaphore>,
 ) -> Result<()> {
     let url = format!("{}/tunnel/ws", api_base);
@@ -84,6 +183,11 @@ pub async fn run(
     );
     headers.insert("x-piglet-version", HeaderValue::from_static(VERSION));
     headers.insert(
+        "x-cyberdriver-peer-id",
+        HeaderValue::from_str(&Config::get_id())
+            .map_err(|e| anyhow!("invalid X-Cyberdriver-Peer-Id header value: {e}"))?,
+    );
+    headers.insert(
         "x-piglet-hostname",
         HeaderValue::from_str(&hostname())
             .unwrap_or_else(|_| HeaderValue::from_static("cyberdriver")),
@@ -93,6 +197,13 @@ pub async fn run(
             "x-cyberdriver-name",
             HeaderValue::from_str(machine_name)
                 .map_err(|e| anyhow!("invalid X-Cyberdriver-Name header value: {e}"))?,
+        );
+    }
+    if let Some(remote_keepalive_for) = remote_keepalive_for.as_deref() {
+        headers.insert(
+            "x-remote-keepalive-for",
+            HeaderValue::from_str(remote_keepalive_for)
+                .map_err(|e| anyhow!("invalid X-Remote-Keepalive-For header value: {e}"))?,
         );
     }
 
@@ -249,13 +360,19 @@ pub async fn run(
                         code,
                         f.reason
                     );
-                    // 4001 = auth (no retry), 4008 = rate limit
-                    // (M7 will distinguish).
                     if let Err(err) = write.send(Message::Close(frame.clone())).await {
                         log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
                     }
                     if code == 4001 {
-                        bail!("cyberdesk_tunnel: server rejected auth (close 4001); refusing to retry");
+                        return Err(AuthRejected::new(code).into());
+                    }
+                    if code == 4009 {
+                        return Err(MachineLimitReached::new(f.reason.to_string()).into());
+                    }
+                    if code == 4008 {
+                        let retry_after = retry_after_from_reason(f.reason.as_ref())
+                            .unwrap_or_else(|| Duration::from_secs(16));
+                        return Err(RateLimited::new(retry_after).into());
                     }
                 } else {
                     log::info!("cyberdesk_tunnel: server closed connection (no close frame)");
@@ -453,6 +570,21 @@ fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {
     map.iter()
         .find(|(key, _)| key.eq_ignore_ascii_case(name))
         .and_then(|(_, value)| value.as_str())
+}
+
+fn retry_after_from_reason(reason: &str) -> Option<Duration> {
+    for token in reason.split(|ch: char| ch == ';' || ch == ',' || ch.is_whitespace()) {
+        let Some(value) = token
+            .strip_prefix("retry-after=")
+            .or_else(|| token.strip_prefix("Retry-After="))
+        else {
+            continue;
+        };
+        if let Ok(seconds) = value.parse::<u64>() {
+            return Some(Duration::from_secs(seconds.clamp(1, 60)));
+        }
+    }
+    None
 }
 
 /// Best-effort local hostname for the X-Piglet-Hostname header. Used

@@ -1,18 +1,16 @@
-name: Flutter Tag Build
+name: Cyberdriver Test Release
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-      - '[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-[0-9]+'
-      - '[0-9]+.[0-9]+.[0-9]+-[0-9]+'
+    inputs:
+      release_tag:
+        description: "GitHub release tag to create/update"
+        required: false
+        default: "test"
 
 jobs:
-  run-flutter-tag-build:
-    uses: ./.github/workflows/flutter-build.yml
+  build-windows-msi:
+    uses: ./.github/workflows/release-windows-msi.yml
     secrets: inherit
     with:
-      upload-artifact: true
-      upload-tag: ${{ github.ref_name }}
+      release_tag: ${{ inputs.release_tag }}

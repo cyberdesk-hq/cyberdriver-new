@@ -42,6 +42,22 @@ copy_if_exists "$BRANDING_DIR/icons/cyberdriver.icns"     "$RES_DIR/icon.icns"
 copy_if_exists "$BRANDING_DIR/icons/cyberdriver-tray.png" "$RES_DIR/tray-icon.png"
 copy_if_exists "$BRANDING_DIR/icons/cyberdriver-512.png"  "$FLUTTER_ASSETS_DIR/logo.png"
 copy_if_exists "$BRANDING_DIR/icons/cyberdriver-1024.png" "$FLUTTER_ASSETS_DIR/logo-1024.png"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-icon.png" "$FLUTTER_ASSETS_DIR/icon.png"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-icon.svg" "$FLUTTER_ASSETS_DIR/icon.svg"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-logo.svg" "$RES_DIR/logo.svg"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-logo.svg" "$RES_DIR/scalable.svg"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-logo-header.svg" "$RES_DIR/logo-header.svg"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-app-icon.png" "$RES_DIR/icon.png"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-app-icon.png" "$RES_DIR/mac-icon.png"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-32.png" "$RES_DIR/32x32.png"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-64.png" "$RES_DIR/64x64.png"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-128.png" "$RES_DIR/128x128.png"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-256.png" "$RES_DIR/128x128@2x.png"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver.ico" "$RES_DIR/tray-icon.ico"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-tray-template.png" "$RES_DIR/mac-tray-dark-x2.png"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver-tray-template.png" "$RES_DIR/mac-tray-light-x2.png"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver.icns" "$REPO_ROOT/flutter/macos/Runner/AppIcon.icns"
+copy_if_exists "$BRANDING_DIR/icons/cyberdriver.ico" "$REPO_ROOT/flutter/windows/runner/resources/app_icon.ico"
 
 echo "[apply-branding] Flutter constants:"
 copy_if_exists "$BRANDING_DIR/flutter/cyberdesk_branding.dart" \
@@ -60,7 +76,7 @@ fi
 # that they need to keep src/cyberdesk_branding.rs::HBBS_PUBKEY in sync.
 HBBS_PUBKEY_FILE="$BRANDING_DIR/hbbs_pubkey.txt"
 if [[ -f "$HBBS_PUBKEY_FILE" ]]; then
-  HBBS_PUBKEY_LINE="$(grep -v '^#' "$HBBS_PUBKEY_FILE" | grep -v '^$' | head -1 || true)"
+  HBBS_PUBKEY_LINE="$(grep -E '^[A-Za-z0-9+/]{40,}={0,2}$' "$HBBS_PUBKEY_FILE" | head -1 || true)"
   if [[ -n "$HBBS_PUBKEY_LINE" && "$HBBS_PUBKEY_LINE" != "PLACEHOLDER_HBBS_ED25519_PUBKEY_BASE64" ]]; then
     if ! grep -q "$HBBS_PUBKEY_LINE" "$REPO_ROOT/src/cyberdesk_branding.rs"; then
       echo "[apply-branding] NOTE: branding/hbbs_pubkey.txt has a value but src/cyberdesk_branding.rs::HBBS_PUBKEY does not match." >&2

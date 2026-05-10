@@ -774,6 +774,67 @@ pub fn handle_pointer(evt: &PointerDeviceEvent, conn: i32) {
     handle_pointer_(evt, conn);
 }
 
+#[cfg(target_os = "macos")]
+pub fn cyberdesk_tunnel_mouse_click(
+    x: Option<i32>,
+    y: Option<i32>,
+    button: i32,
+    clicks: u8,
+    down: Option<bool>,
+) {
+    QUEUE.exec_async(move || {
+        let button = match button {
+            MOUSE_BUTTON_LEFT => MouseButton::Left,
+            MOUSE_BUTTON_RIGHT => MouseButton::Right,
+            MOUSE_BUTTON_WHEEL => MouseButton::Middle,
+            MOUSE_BUTTON_BACK => MouseButton::Back,
+            MOUSE_BUTTON_FORWARD => MouseButton::Forward,
+            _ => MouseButton::Left,
+        };
+
+        let mut en = ENIGO.lock().unwrap();
+        en.set_ignore_flags(enigo_ignore_flags());
+        en.reset_flag();
+
+        if down.is_none() {
+            // Desktop Tools "click" is an atomic action, not a drag. If a prior
+            // synthetic down was interrupted or macOS still reports the button
+            // as pressed, moving first can create text selection/drag behavior.
+            en.mouse_up(button);
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        if let (Some(x), Some(y)) = (x, y) {
+            en.mouse_move_to(x, y);
+            *LATEST_PEER_INPUT_CURSOR.lock().unwrap() = Input {
+                conn: 0,
+                time: get_time(),
+                x,
+                y,
+            };
+            // CGEvent posting is asynchronous enough that an immediate down can
+            // race the move on macOS. Keep move+click in one queued closure and
+            // give the cursor event a short settle window.
+            thread::sleep(Duration::from_millis(60));
+        }
+
+        match down {
+            Some(true) => {
+                allow_err!(en.mouse_down(button));
+            }
+            Some(false) => {
+                en.mouse_up(button);
+            }
+            None => {
+                for _ in 0..clicks.max(1) {
+                    en.mouse_click(button);
+                    thread::sleep(Duration::from_millis(35));
+                }
+            }
+        }
+    });
+}
+
 pub fn fix_key_down_timeout_loop() {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(10_000));

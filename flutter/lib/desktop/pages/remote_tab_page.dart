@@ -59,6 +59,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
     final tabWindowId = params['tab_window_id'];
     final display = params['display'];
     final displays = params['displays'];
+    final tabLabel = params['tab_label'] ?? peerId;
     final screenRect = parseParamScreenRect(params);
     _isScreenRectSet = screenRect != null;
     _display = display as int?;
@@ -77,7 +78,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       };
       tabController.add(TabInfo(
         key: peerId!,
-        label: peerId!,
+        label: tabLabel!,
         selectedIcon: selectedIcon,
         unselectedIcon: unselectedIcon,
         onTabCloseButton: () async {
@@ -434,6 +435,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       final tabWindowId = args['tab_window_id'];
       final display = args['display'];
       final displays = args['displays'];
+      final tabLabel = args['tab_label'] ?? id;
       final screenRect = parseParamScreenRect(args);
       final prePeerCount = tabController.length;
       Future.delayed(Duration.zero, () async {
@@ -450,7 +452,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       ConnectionTypeState.init(id);
       tabController.add(TabInfo(
         key: id,
-        label: id,
+        label: tabLabel,
         selectedIcon: selectedIcon,
         unselectedIcon: unselectedIcon,
         onTabCloseButton: () async {

@@ -1,0 +1,30 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+	<Fragment>
+		<UI>
+			<Dialog Id="CyberdeskConfigDlg" Width="370" Height="270" Title="!(loc.CyberdeskConfigDlg_Title)">
+				<Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+				<Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+				<Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+					<Publish Event="SpawnDialog" Value="CancelDlg" />
+				</Control>
+
+				<Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.CyberdeskConfigDlgDescription)" />
+				<Control Id="Title" Type="Text" X="15" Y="6" Width="260" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.CyberdeskConfigDlgTitle)" />
+				<Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+				<Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+				<Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+
+				<Control Id="InstallService" Type="CheckBox" X="20" Y="60" Width="320" Height="17" Property="INSTALL_AS_SERVICE" CheckBoxValue="1" Text="!(loc.CyberdeskConfigDlgInstallService)" />
+				<Control Id="ApiKeyLabel" Type="Text" X="20" Y="90" Width="320" Height="12" Text="!(loc.CyberdeskConfigDlgApiKeyLabel)" />
+				<Control Id="ApiKey" Type="Edit" X="20" Y="105" Width="320" Height="18" Property="APIKEY" Password="yes" />
+				<Control Id="ApiKeyHelp" Type="Text" X="20" Y="127" Width="320" Height="20" Text="!(loc.CyberdeskConfigDlgApiKeyHelp)" />
+
+				<Control Id="ApiBaseLabel" Type="Text" X="20" Y="155" Width="320" Height="12" Text="!(loc.CyberdeskConfigDlgApiBaseLabel)" />
+				<Control Id="ApiBase" Type="Edit" X="20" Y="170" Width="320" Height="18" Property="CYBERDESK_API_BASE" />
+				<Control Id="ApiBaseHelp" Type="Text" X="20" Y="192" Width="320" Height="20" Text="!(loc.CyberdeskConfigDlgApiBaseHelp)" />
+
+				<Control Id="AllowInsecureApiBase" Type="CheckBox" X="20" Y="216" Width="320" Height="17" Property="CYBERDESK_ALLOW_INSECURE_API_BASE" CheckBoxValue="1" Text="!(loc.CyberdeskConfigDlgAllowInsecureApiBase)" />
+			</Dialog>
+		</UI>
+	</Fragment>
+</Wix>

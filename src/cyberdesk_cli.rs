@@ -7,7 +7,11 @@
 // X11/Wayland display is available.
 
 use serde_json::json;
-use std::io::Read as _;
+use std::{
+    io::{Read as _, Seek as _, SeekFrom},
+    path::PathBuf,
+    time::Duration,
+};
 
 const NAME_ENV: &str = "CYBERDRIVER_MACHINE_NAME";
 const NAME_MAX_LEN: usize = 128;
@@ -85,13 +89,21 @@ enum EarlyCommand {
 
 struct JoinCommand {
     secret: String,
+    environment: Option<crate::cyberdesk_branding::CyberdeskEnvironment>,
     api_base: Option<String>,
+    allow_insecure_api_base: bool,
+    remote_keepalive_for: Option<String>,
+    keepalive_enabled: Option<bool>,
+    new_identity: bool,
 }
 
 struct MsiConfigureCommand {
     api_key: Option<String>,
     api_base: Option<String>,
+    allow_insecure_api_base: bool,
+    service_config_profile: bool,
     reset_fingerprint: bool,
+    new_identity: bool,
 }
 
 fn parse_command(args: &[String]) -> EarlyCommand {
@@ -123,12 +135,16 @@ fn parse_command(args: &[String]) -> EarlyCommand {
             reset_fingerprint();
             EarlyCommand::Handled(0)
         }
+        "new-identity" | "reset-identity" | "--new-identity" => {
+            generate_new_identity();
+            EarlyCommand::Handled(0)
+        }
         "stop" => {
             stop();
             EarlyCommand::Handled(0)
         }
         "logs" => {
-            print_logs_hint();
+            print_logs(args);
             EarlyCommand::Handled(0)
         }
         _ => EarlyCommand::Continue,
@@ -147,9 +163,17 @@ fn parse_join(args: &[String]) -> EarlyCommand {
         return EarlyCommand::Handled(2);
     };
 
-    let api_base = match option_value(args, "--api-base").or_else(|| option_value(args, "--host"))
-    {
-        Some(value) => match validate_api_base(&value) {
+    let allow_insecure_api_base = has_flag(args, "--allow-insecure-api-base")
+        || env_truthy("CYBERDESK_ALLOW_INSECURE_API_BASE");
+    let environment = match parse_environment(args) {
+        Ok(environment) => environment,
+        Err(message) => {
+            eprintln!("{message}");
+            return EarlyCommand::Handled(2);
+        }
+    };
+    let api_base = match option_value(args, "--api-base").or_else(|| option_value(args, "--host")) {
+        Some(value) => match validate_api_base(&value, allow_insecure_api_base) {
             Ok(value) => Some(value),
             Err(message) => {
                 eprintln!("{message}");
@@ -159,7 +183,23 @@ fn parse_join(args: &[String]) -> EarlyCommand {
         None => None,
     };
 
-    EarlyCommand::Join(JoinCommand { secret, api_base })
+    EarlyCommand::Join(JoinCommand {
+        secret,
+        environment,
+        api_base,
+        allow_insecure_api_base,
+        remote_keepalive_for: option_value(args, "--register-as-keepalive-for")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        keepalive_enabled: if has_flag(args, "--keepalive") {
+            Some(true)
+        } else if has_flag(args, "--no-keepalive") {
+            Some(false)
+        } else {
+            None
+        },
+        new_identity: has_flag(args, "--new-identity") || has_flag(args, "--reset-identity"),
+    })
 }
 
 fn parse_msi_configure(args: &[String]) -> EarlyCommand {
@@ -174,9 +214,11 @@ fn parse_msi_configure(args: &[String]) -> EarlyCommand {
     }
 
     let api_key = option_value(args, "--api-key").filter(|value| !value.trim().is_empty());
+    let allow_insecure_api_base = has_flag(args, "--allow-insecure-api-base")
+        || env_truthy("CYBERDESK_ALLOW_INSECURE_API_BASE");
     let api_base = match option_value(args, "--api-base") {
         Some(value) if value.trim().is_empty() => None,
-        Some(value) => match validate_api_base(&value) {
+        Some(value) => match validate_api_base(&value, allow_insecure_api_base) {
             Ok(value) => Some(value),
             Err(message) => {
                 eprintln!("{message}");
@@ -185,12 +227,16 @@ fn parse_msi_configure(args: &[String]) -> EarlyCommand {
         },
         None => None,
     };
-    let reset_fingerprint = has_flag(args, "--reset-fingerprint");
+    let new_identity = has_flag(args, "--new-identity") || has_flag(args, "--reset-identity");
+    let reset_fingerprint = has_flag(args, "--reset-fingerprint") || new_identity;
 
     EarlyCommand::MsiConfigure(MsiConfigureCommand {
         api_key,
         api_base,
+        allow_insecure_api_base,
+        service_config_profile: has_flag(args, "--service-config-profile"),
         reset_fingerprint,
+        new_identity,
     })
 }
 
@@ -206,30 +252,65 @@ fn read_msi_config_from_stdin() -> Result<MsiConfigureCommand, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
-    let api_base = match lines.next().map(str::trim).filter(|value| !value.is_empty()) {
-        Some(value) => Some(validate_api_base(value)?),
+    let api_base_raw = lines.next().map(str::trim).filter(|value| !value.is_empty());
+    let allow_insecure_api_base = lines
+        .next()
+        .map(parse_truthy)
+        .unwrap_or_else(|| env_truthy("CYBERDESK_ALLOW_INSECURE_API_BASE"));
+    let api_base = match api_base_raw {
+        Some(value) => Some(validate_api_base(value, allow_insecure_api_base)?),
         None => None,
     };
 
     Ok(MsiConfigureCommand {
         api_key,
         api_base,
+        allow_insecure_api_base,
+        service_config_profile: has_flag(
+            &std::env::args().collect::<Vec<_>>(),
+            "--service-config-profile",
+        ),
         reset_fingerprint: false,
+        new_identity: false,
     })
 }
 
 fn run_join(join: JoinCommand) {
+    let _ = join.allow_insecure_api_base;
     if let Err(message) = ensure_runtime_display_available() {
         eprintln!("{message}");
         std::process::exit(2);
     }
 
+    if join.new_identity {
+        if let Err(err) = crate::cyberdesk_tunnel::generate_new_identity() {
+            eprintln!("failed to generate new Cyberdriver identity: {err}");
+            std::process::exit(1);
+        }
+    }
     if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(join.secret) {
         eprintln!("error: {message}");
         std::process::exit(2);
     }
+    if let Some(environment) = join.environment {
+        crate::cyberdesk_branding::apply_environment(environment);
+    }
     if let Some(api_base) = join.api_base {
+        if let Some(api_server) = api_server_from_tunnel_base(&api_base) {
+            hbb_common::config::Config::set_option("api-server".to_string(), api_server);
+            hbb_common::config::LocalConfig::set_option(
+                crate::cyberdesk_branding::ENVIRONMENT_OPTION.to_string(),
+                "custom".to_string(),
+            );
+        }
         crate::cyberdesk_tunnel::store_configured_api_base(api_base);
+    }
+    crate::cyberdesk_tunnel::store_configured_remote_keepalive_for(join.remote_keepalive_for);
+    if let Some(enabled) = join.keepalive_enabled {
+        hbb_common::config::LocalConfig::set_option(
+            "cyberdesk_keepalive_enabled".to_string(),
+            if enabled { "Y" } else { "N" }.to_string(),
+        );
     }
 
     match spawn_join_runtime() {
@@ -245,6 +326,10 @@ fn run_join(join: JoinCommand) {
 }
 
 fn run_msi_configure(configure: MsiConfigureCommand) {
+    let _ = configure.allow_insecure_api_base;
+    if configure.service_config_profile {
+        use_windows_service_config_profile();
+    }
     if let Some(api_key) = configure.api_key {
         if !api_key.trim().is_empty() {
             if let Err(message) = crate::cyberdesk_tunnel::store_configured_api_key(api_key) {
@@ -256,13 +341,31 @@ fn run_msi_configure(configure: MsiConfigureCommand) {
     if let Some(api_base) = configure.api_base {
         crate::cyberdesk_tunnel::store_configured_api_base(api_base);
     }
-    if configure.reset_fingerprint {
+    if configure.new_identity {
+        if let Err(err) = crate::cyberdesk_tunnel::generate_new_identity() {
+            eprintln!("failed to generate new Cyberdriver identity: {err}");
+            std::process::exit(1);
+        }
+    } else if configure.reset_fingerprint {
         if let Err(err) = crate::cyberdesk_tunnel::reset_fingerprint() {
             eprintln!("failed to reset Cyberdriver fingerprint: {err}");
             std::process::exit(1);
         }
     }
 }
+
+#[cfg(windows)]
+fn use_windows_service_config_profile() {
+    let profile = r"C:\Windows\ServiceProfiles\LocalService";
+    std::env::set_var("USERPROFILE", profile);
+    std::env::set_var("APPDATA", format!(r"{profile}\AppData\Roaming"));
+    std::env::set_var("LOCALAPPDATA", format!(r"{profile}\AppData\Local"));
+    let _ = std::fs::create_dir_all(format!(r"{profile}\AppData\Roaming"));
+    let _ = std::fs::create_dir_all(format!(r"{profile}\AppData\Local"));
+}
+
+#[cfg(not(windows))]
+fn use_windows_service_config_profile() {}
 
 fn spawn_join_runtime() -> std::io::Result<std::process::Child> {
     let mut command = std::process::Command::new(std::env::current_exe()?);
@@ -315,6 +418,18 @@ fn reset_fingerprint() {
     }
 }
 
+fn generate_new_identity() {
+    match crate::cyberdesk_tunnel::generate_new_identity() {
+        Ok(id) => println!(
+            "Cyberdriver identity reset. New RustDesk peer ID: {id}. A new Cyberdesk fingerprint will be generated on next tunnel start."
+        ),
+        Err(err) => {
+            eprintln!("failed to generate new Cyberdriver identity: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn print_status() {
     let api_key = crate::cyberdesk_tunnel::configured_api_key();
     let fingerprint = crate::cyberdesk_tunnel::current_fingerprint();
@@ -339,14 +454,26 @@ fn print_status() {
         "  fingerprint: {}",
         fingerprint.as_deref().unwrap_or("not generated")
     );
+    println!(
+        "  rustdesk peer id: {}",
+        hbb_common::config::Config::get_id()
+    );
 }
 
 fn print_config() {
     let value = json!({
         "api_key_configured": crate::cyberdesk_tunnel::configured_api_key().is_some(),
         "api_base": crate::cyberdesk_tunnel::configured_api_base(),
+        "cyberdesk_environment": hbb_common::config::LocalConfig::get_option(
+            crate::cyberdesk_branding::ENVIRONMENT_OPTION
+        ),
+        "desktop_api_server": hbb_common::config::Config::get_option("api-server"),
+        "rendezvous_server": hbb_common::config::Config::get_option("custom-rendezvous-server"),
+        "relay_server": hbb_common::config::Config::get_option("relay-server"),
         "fingerprint": crate::cyberdesk_tunnel::current_fingerprint(),
+        "rustdesk_peer_id": hbb_common::config::Config::get_id(),
         "machine_name": machine_name_from_env(),
+        "remote_keepalive_for": crate::cyberdesk_tunnel::configured_remote_keepalive_for(),
         "config_path": crate::cyberdesk_tunnel::config_path().display().to_string(),
     });
     match serde_json::to_string_pretty(&value) {
@@ -397,11 +524,81 @@ fn stop_service_process() -> bool {
     false
 }
 
-fn print_logs_hint() {
-    println!("Cyberdriver logs are written under the RustDesk/Cyberdriver config log directory.");
-    println!(
-        "Use the service manager or dashboard diagnostics for live tunnel logs in this build."
-    );
+fn print_logs(args: &[String]) {
+    let path = option_value(args, "--path")
+        .map(PathBuf::from)
+        .or_else(latest_log_file)
+        .unwrap_or_else(|| hbb_common::config::Config::log_path());
+    let tail = option_value(args, "--tail")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(64 * 1024);
+
+    println!("Cyberdriver log path: {}", path.display());
+    if path.is_dir() {
+        println!("No log file selected. Pass --path <file> or start Cyberdriver first.");
+        return;
+    }
+    if let Err(err) = print_log_tail(&path, tail) {
+        eprintln!("failed to read log file: {err}");
+        return;
+    }
+    if has_flag(args, "--follow") || has_flag(args, "-f") {
+        follow_log(&path);
+    }
+}
+
+fn latest_log_file() -> Option<PathBuf> {
+    let log_dir = hbb_common::config::Config::log_path();
+    let entries = std::fs::read_dir(log_dir).ok()?;
+    entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            let modified = metadata.modified().ok()?;
+            Some((modified, path))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+}
+
+fn print_log_tail(path: &PathBuf, max_bytes: u64) -> std::io::Result<u64> {
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start))?;
+    let mut out = String::new();
+    file.read_to_string(&mut out)?;
+    print!("{out}");
+    Ok(len)
+}
+
+fn follow_log(path: &PathBuf) {
+    let mut offset = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let Ok(mut file) = std::fs::File::open(path) else {
+            continue;
+        };
+        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if len < offset {
+            offset = 0;
+        }
+        if len == offset {
+            continue;
+        }
+        if file.seek(SeekFrom::Start(offset)).is_err() {
+            continue;
+        }
+        let mut out = String::new();
+        if file.read_to_string(&mut out).is_ok() {
+            print!("{out}");
+            offset = len;
+        }
+    }
 }
 
 fn print_help() {
@@ -409,13 +606,14 @@ fn print_help() {
         r#"Cyberdriver
 
 Usage:
-  cyberdriver join --secret <ak_*> [--name <name>] [--api-base <ws-or-http-base>]
+  cyberdriver join --secret <ak_*> [--name <name>] [--keepalive] [--new-identity] [--api-base <ws-or-http-base>] [--register-as-keepalive-for <machine-id>] [--allow-insecure-api-base]
   cyberdriver status
   cyberdriver health
   cyberdriver config-print
+  cyberdriver new-identity
   cyberdriver reset-fingerprint
   cyberdriver stop
-  cyberdriver logs
+  cyberdriver logs [--path <file>] [--tail <bytes>] [--follow]
   cyberdriver --version
   cyberdriver --help
 "#
@@ -427,14 +625,28 @@ fn print_join_help() {
         r#"Cyberdriver join
 
 Usage:
-  cyberdriver join --secret <ak_*> [--name <name>] [--api-base <ws-or-http-base>]
+  cyberdriver join --secret <ak_*> [--name <name>] [--keepalive] [--new-identity] [--env prod|dev] [--api-base <ws-or-http-base>] [--register-as-keepalive-for <machine-id>] [--allow-insecure-api-base]
 
 Options:
   --secret <ak_*>          Cyberdesk API key.
   --name <name>            Optional machine name sent as X-CYBERDRIVER-NAME.
                            Printable ASCII only, max 128 chars, not persisted.
+  --new-identity           Generate a new RustDesk peer ID/keypair and Cyberdesk
+                           fingerprint before joining. Use this for AMI/template clones.
+  --keepalive              Enable Cyberdesk keepalive. This is the default, but
+                           the flag is useful for explicit AMI/bootstrap scripts.
+  --no-keepalive           Disable Cyberdesk keepalive.
+  --env <prod|dev>         Apply Cyberdesk environment preset for API, hbbs, hbbr, and key.
+  --dev                    Shorthand for --env dev.
   --api-base <base>        Tunnel WebSocket base, e.g. ws://localhost:8080.
+                           Also updates the desktop API server for GUI login.
+  --register-as-keepalive-for <machine-id>
+                           Register this host as the remote keepalive machine for
+                           the main Cyberdesk machine ID.
   --host <host>            Compatibility shorthand for wss://<host>.
+  --allow-insecure-api-base
+                           Deprecated compatibility flag. Plaintext ws:// or
+                           http:// API bases are only allowed for loopback.
   -h, --help               Show this help.
 
 Security:
@@ -448,7 +660,7 @@ fn api_base_from_host(host: &str) -> String {
     format!("wss://{host}")
 }
 
-fn validate_api_base(raw: &str) -> Result<String, String> {
+fn validate_api_base(raw: &str, _allow_insecure_api_base: bool) -> Result<String, String> {
     let value = raw.trim();
     if value.is_empty() {
         return Err("error: --api-base must not be empty".to_string());
@@ -482,7 +694,7 @@ fn validate_api_base(raw: &str) -> Result<String, String> {
             ));
         }
         return Err(
-            "error: insecure --api-base is only allowed for localhost/loopback dev targets"
+            "error: insecure --api-base is only allowed for localhost/loopback dev targets; use https:// or wss:// for dev/staging/prod"
                 .to_string(),
         );
     }
@@ -492,6 +704,39 @@ fn validate_api_base(raw: &str) -> Result<String, String> {
     }
 
     Ok(api_base_from_host(value.trim_end_matches('/')))
+}
+
+fn parse_environment(
+    args: &[String],
+) -> Result<Option<crate::cyberdesk_branding::CyberdeskEnvironment>, String> {
+    let from_dev_flag = has_flag(args, "--dev")
+        .then_some(crate::cyberdesk_branding::CyberdeskEnvironment::Development);
+    let from_env = match option_value(args, "--env") {
+        Some(value) => match crate::cyberdesk_branding::CyberdeskEnvironment::parse(&value) {
+            Some(environment) => Some(environment),
+            None => return Err("error: --env must be one of: prod, dev".to_string()),
+        },
+        None => None,
+    };
+    match (from_dev_flag, from_env) {
+        (Some(dev), Some(env)) if dev != env => {
+            Err("error: --dev conflicts with --env prod".to_string())
+        }
+        (Some(dev), _) => Ok(Some(dev)),
+        (None, environment) => Ok(environment),
+    }
+}
+
+fn api_server_from_tunnel_base(api_base: &str) -> Option<String> {
+    if let Some(rest) = api_base.strip_prefix("wss://") {
+        return Some(format!("https://{rest}"));
+    }
+    if api_base.starts_with("ws://") && is_loopback_api_base(api_base) {
+        return api_base
+            .strip_prefix("ws://")
+            .map(|rest| format!("http://{rest}"));
+    }
+    None
 }
 
 fn is_loopback_api_base(value: &str) -> bool {
@@ -520,11 +765,24 @@ fn is_known_option(value: &str) -> bool {
         value,
         "--secret"
             | "--name"
+            | "--env"
+            | "--dev"
+            | "--keepalive"
+            | "--no-keepalive"
+            | "--new-identity"
+            | "--reset-identity"
             | "--api-base"
+            | "--register-as-keepalive-for"
             | "--host"
             | "--api-key"
             | "--stdin"
             | "--reset-fingerprint"
+            | "--allow-insecure-api-base"
+            | "--service-config-profile"
+            | "--path"
+            | "--tail"
+            | "--follow"
+            | "-f"
             | "-h"
             | "--help"
     )
@@ -534,9 +792,26 @@ fn has_flag(args: &[String], name: &str) -> bool {
     args.iter().any(|arg| arg == name)
 }
 
+fn env_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| parse_truthy(&value))
+        .unwrap_or(false)
+}
+
+fn parse_truthy(value: &str) -> bool {
+    matches!(
+        value.trim(),
+        "1" | "Y" | "y" | "true" | "TRUE" | "True" | "yes" | "YES" | "Yes"
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{option_value, sanitize_machine_name, validate_api_base, NAME_MAX_LEN};
+    use super::{
+        api_server_from_tunnel_base, option_value, parse_environment, sanitize_machine_name,
+        validate_api_base, NAME_MAX_LEN,
+    };
+    use crate::cyberdesk_branding::CyberdeskEnvironment;
 
     #[test]
     fn sanitize_machine_name_accepts_trimmed_printable_ascii() {
@@ -588,16 +863,65 @@ mod tests {
             "--api-base".to_string(),
             "--api-key".to_string(),
             "ak_test".to_string(),
-            "--reset-fingerprint".to_string(),
+            "--new-identity".to_string(),
         ];
         assert_eq!(option_value(&args, "--api-base"), None);
         assert_eq!(option_value(&args, "--api-key"), Some("ak_test".to_string()));
     }
 
     #[test]
+    fn parse_environment_accepts_dev_and_prod_aliases() {
+        assert_eq!(
+            parse_environment(&["join".to_string(), "--env".to_string(), "dev".to_string()]),
+            Ok(Some(CyberdeskEnvironment::Development))
+        );
+        assert_eq!(
+            parse_environment(&[
+                "join".to_string(),
+                "--env=production".to_string(),
+            ]),
+            Ok(Some(CyberdeskEnvironment::Production))
+        );
+        assert_eq!(
+            parse_environment(&["join".to_string(), "--dev".to_string()]),
+            Ok(Some(CyberdeskEnvironment::Development))
+        );
+    }
+
+    #[test]
+    fn parse_environment_rejects_unknown_or_conflicting_values() {
+        assert!(parse_environment(&[
+            "join".to_string(),
+            "--env".to_string(),
+            "staging".to_string(),
+        ])
+        .is_err());
+        assert!(parse_environment(&[
+            "join".to_string(),
+            "--dev".to_string(),
+            "--env".to_string(),
+            "prod".to_string(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn api_server_from_tunnel_base_maps_websocket_scheme() {
+        assert_eq!(
+            api_server_from_tunnel_base("wss://cyberdesk-api-dev.fly.dev"),
+            Some("https://cyberdesk-api-dev.fly.dev".to_string())
+        );
+        assert_eq!(
+            api_server_from_tunnel_base("ws://localhost:8080"),
+            Some("http://localhost:8080".to_string())
+        );
+        assert_eq!(api_server_from_tunnel_base("ws://100.66.79.97:8080"), None);
+    }
+
+    #[test]
     fn validate_api_base_omits_empty_msi_stdin_values() {
-        assert!(validate_api_base("").is_err());
-        assert!(validate_api_base("   ").is_err());
+        assert!(validate_api_base("", false).is_err());
+        assert!(validate_api_base("   ", false).is_err());
     }
 
     #[test]
@@ -612,60 +936,66 @@ mod tests {
 
     #[test]
     fn validate_api_base_rejects_insecure_non_loopback() {
-        assert!(validate_api_base("").is_err());
-        assert!(validate_api_base("   ").is_err());
-        assert!(validate_api_base("ws://api.cyberdesk.io").is_err());
-        assert!(validate_api_base("http://10.0.0.10:8080").is_err());
-        assert!(validate_api_base("HTTP://10.0.0.10:8080").is_err());
-        assert!(validate_api_base("http://evil.com#@localhost:8080").is_err());
-        assert!(validate_api_base("ftp://api.cyberdesk.io").is_err());
+        assert!(validate_api_base("", false).is_err());
+        assert!(validate_api_base("   ", false).is_err());
+        assert!(validate_api_base("ws://api.cyberdesk.io", false).is_err());
+        assert!(validate_api_base("http://10.0.0.10:8080", false).is_err());
+        assert!(validate_api_base("HTTP://10.0.0.10:8080", false).is_err());
+        assert!(validate_api_base("http://evil.com#@localhost:8080", false).is_err());
+        assert!(validate_api_base("ftp://api.cyberdesk.io", false).is_err());
     }
 
     #[test]
     fn validate_api_base_allows_secure_and_local_dev_targets() {
         assert_eq!(
-            validate_api_base("api.cyberdesk.io"),
+            validate_api_base("api.cyberdesk.io", false),
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
-            validate_api_base("https://api.cyberdesk.io"),
+            validate_api_base("https://api.cyberdesk.io", false),
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
-            validate_api_base("HTTPS://api.cyberdesk.io"),
+            validate_api_base("HTTPS://api.cyberdesk.io", false),
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
-            validate_api_base("ws://localhost:8080"),
+            validate_api_base("ws://localhost:8080", false),
             Ok("ws://localhost:8080".to_string())
         );
         assert_eq!(
-            validate_api_base("WS://localhost:8080"),
+            validate_api_base("WS://localhost:8080", false),
             Ok("ws://localhost:8080".to_string())
         );
         assert_eq!(
-            validate_api_base("http://127.0.0.1:8080"),
+            validate_api_base("http://127.0.0.1:8080", false),
             Ok("ws://127.0.0.1:8080".to_string())
         );
         assert_eq!(
-            validate_api_base("ws://[::1]:8080"),
+            validate_api_base("ws://[::1]:8080", false),
             Ok("ws://[::1]:8080".to_string())
         );
         assert_eq!(
-            validate_api_base("http://[::1]"),
+            validate_api_base("http://[::1]", false),
             Ok("ws://[::1]".to_string())
         );
         assert_eq!(
-            validate_api_base("api.cyberdesk.io/"),
+            validate_api_base("api.cyberdesk.io/", false),
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
-            validate_api_base("https://api.cyberdesk.io/"),
+            validate_api_base("https://api.cyberdesk.io/", false),
             Ok("wss://api.cyberdesk.io".to_string())
         );
         assert_eq!(
-            validate_api_base("ws://localhost:8080/"),
+            validate_api_base("ws://localhost:8080/", false),
             Ok("ws://localhost:8080".to_string())
         );
+    }
+
+    #[test]
+    fn validate_api_base_rejects_explicit_insecure_non_loopback_targets() {
+        assert!(validate_api_base("ws://100.66.79.97:8080", true).is_err());
+        assert!(validate_api_base("http://10.0.0.10:8080", true).is_err());
     }
 }

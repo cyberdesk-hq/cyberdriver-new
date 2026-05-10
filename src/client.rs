@@ -2617,6 +2617,7 @@ impl LoginConfigHandler {
         os_username: String,
         os_password: String,
         password: Vec<u8>,
+        cyberdesk_token: String,
     ) -> Message {
         #[cfg(any(target_os = "android", target_os = "ios"))]
         let my_id = Config::get_id_or(crate::DEVICE_ID.lock().unwrap().clone());
@@ -2702,6 +2703,10 @@ impl LoginConfigHandler {
             .into(),
             hwid,
             avatar,
+            cyberdesk_token,
+            cyberdesk_selected_organization_id: LocalConfig::get_option(
+                "cyberdesk_selected_organization_id",
+            ),
             ..Default::default()
         };
         match self.conn_type {
@@ -3535,11 +3540,117 @@ async fn send_login(
     password: Vec<u8>,
     peer: &mut Stream,
 ) {
+    let cyberdesk_token = mint_cyberdesk_connection_token(lc.clone()).await;
     let msg_out = lc
         .read()
         .unwrap()
-        .create_login_msg(os_username, os_password, password);
+        .create_login_msg(os_username, os_password, password, cyberdesk_token);
     allow_err!(peer.send(&msg_out).await);
+}
+
+#[cfg(feature = "cyberdesk")]
+async fn mint_cyberdesk_connection_token(lc: Arc<RwLock<LoginConfigHandler>>) -> String {
+    let access_token = LocalConfig::get_option("access_token");
+    let access_token = access_token.trim();
+    if access_token.is_empty() {
+        return String::new();
+    }
+
+    let target_peer_id = {
+        let id = lc.read().unwrap().id.clone();
+        id.split_once('@')
+            .map(|(peer_id, _)| peer_id.to_owned())
+            .unwrap_or(id)
+    };
+    if target_peer_id.is_empty() {
+        return String::new();
+    }
+
+    let mut api_server = Config::get_option("api-server");
+    if api_server.is_empty() {
+        api_server = crate::cyberdesk_branding::API_SERVER.to_owned();
+    }
+    if api_server.is_empty() {
+        return String::new();
+    }
+    if !cyberdesk_api_server_allows_auth(&api_server) {
+        log::warn!(
+            "Cyberdesk connection token request skipped: refusing to send bearer token over insecure non-loopback API server {}",
+            api_server
+        );
+        return String::new();
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => {
+            log::warn!("Cyberdesk connection token HTTP client setup failed: {err}");
+            return String::new();
+        }
+    };
+    let selected_organization_id = LocalConfig::get_option("cyberdesk_selected_organization_id");
+    let response = client
+        .post(format!(
+            "{}/api/cyberdriver/connection-token",
+            api_server.trim_end_matches('/')
+        ))
+        .bearer_auth(access_token)
+        .json(&serde_json::json!({
+            "rustdeskPeerId": target_peer_id,
+            "selectedOrganizationId": selected_organization_id,
+        }))
+        .send()
+        .await;
+    let response = match response {
+        Ok(response) => response,
+        Err(err) => {
+            log::warn!("Cyberdesk connection token request failed: {err}");
+            return String::new();
+        }
+    };
+    let status = response.status();
+    let body = match response.json::<serde_json::Value>().await {
+        Ok(body) => body,
+        Err(err) => {
+            log::warn!("Cyberdesk connection token response decode failed: {err}");
+            return String::new();
+        }
+    };
+    let token = body
+        .get("desktopToken")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    if token.is_empty() {
+        log::warn!("Cyberdesk connection token response did not include a token (HTTP {status})");
+    }
+    token
+}
+
+#[cfg(feature = "cyberdesk")]
+fn cyberdesk_api_server_allows_auth(api_server: &str) -> bool {
+    if api_server.starts_with("https://") {
+        return true;
+    }
+    if !api_server.starts_with("http://") {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(api_server) else {
+        return false;
+    };
+    matches!(
+        url.host_str().map(|host| host.trim_matches(['[', ']'])),
+        Some("localhost" | "127.0.0.1" | "::1")
+    )
+}
+
+#[cfg(not(feature = "cyberdesk"))]
+async fn mint_cyberdesk_connection_token(_lc: Arc<RwLock<LoginConfigHandler>>) -> String {
+    String::new()
 }
 
 /// Handle login request made from ui.
@@ -3598,7 +3709,7 @@ async fn send_switch_login_request(
         lr: hbb_common::protobuf::MessageField::some(
             lc.read()
                 .unwrap()
-                .create_login_msg("".to_owned(), "".to_owned(), vec![])
+                .create_login_msg("".to_owned(), "".to_owned(), vec![], String::new())
                 .login_request()
                 .to_owned(),
         ),

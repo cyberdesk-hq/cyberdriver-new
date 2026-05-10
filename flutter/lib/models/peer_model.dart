@@ -13,6 +13,8 @@ class Peer {
   String hostname;
   String platform;
   String alias;
+  String cyberdeskMachineId;
+  String cyberdeskMachineName;
   List<dynamic> tags;
   bool forceAlwaysRelay = false;
   String rdpPort;
@@ -30,6 +32,22 @@ class Peer {
     return id;
   }
 
+  String get cyberdeskDisplayName {
+    if (cyberdeskMachineName.trim().isNotEmpty) {
+      return cyberdeskMachineName.trim();
+    }
+    if (cyberdeskMachineId.trim().isNotEmpty) {
+      return cyberdeskMachineId.trim();
+    }
+    if (alias.trim().isNotEmpty) {
+      return alias.trim();
+    }
+    if (hostname.trim().isNotEmpty) {
+      return hostname.trim();
+    }
+    return '';
+  }
+
   Peer.fromJson(Map<String, dynamic> json)
       : id = json['id'] ?? '',
         hash = json['hash'] ?? '',
@@ -38,6 +56,10 @@ class Peer {
         hostname = json['hostname'] ?? '',
         platform = json['platform'] ?? '',
         alias = json['alias'] ?? '',
+        cyberdeskMachineId =
+            json['machine_id'] ?? json['cyberdesk_machine_id'] ?? '',
+        cyberdeskMachineName =
+            json['machine_name'] ?? json['cyberdesk_machine_name'] ?? '',
         tags = json['tags'] ?? [],
         forceAlwaysRelay = json['forceAlwaysRelay'] == 'true',
         rdpPort = json['rdpPort'] ?? '',
@@ -56,6 +78,8 @@ class Peer {
       "hostname": hostname,
       "platform": platform,
       "alias": alias,
+      "machine_id": cyberdeskMachineId,
+      "machine_name": cyberdeskMachineName,
       "tags": tags,
       "forceAlwaysRelay": forceAlwaysRelay.toString(),
       "rdpPort": rdpPort,
@@ -74,6 +98,8 @@ class Peer {
       "hostname": hostname,
       "platform": platform,
       "alias": alias,
+      "machine_id": cyberdeskMachineId,
+      "machine_name": cyberdeskMachineName,
       "tags": tags,
     };
     if (includingHash) {
@@ -101,6 +127,8 @@ class Peer {
     required this.hostname,
     required this.platform,
     required this.alias,
+    required this.cyberdeskMachineId,
+    required this.cyberdeskMachineName,
     required this.tags,
     required this.forceAlwaysRelay,
     required this.rdpPort,
@@ -120,6 +148,8 @@ class Peer {
           hostname: '...',
           platform: '...',
           alias: '',
+          cyberdeskMachineId: '',
+          cyberdeskMachineName: '',
           tags: [],
           forceAlwaysRelay: false,
           rdpPort: '',
@@ -136,6 +166,8 @@ class Peer {
         hostname == other.hostname &&
         platform == other.platform &&
         alias == other.alias &&
+        cyberdeskMachineId == other.cyberdeskMachineId &&
+        cyberdeskMachineName == other.cyberdeskMachineName &&
         tags.equals(other.tags) &&
         forceAlwaysRelay == other.forceAlwaysRelay &&
         rdpPort == other.rdpPort &&
@@ -154,6 +186,8 @@ class Peer {
             hostname: other.hostname,
             platform: other.platform,
             alias: other.alias,
+            cyberdeskMachineId: other.cyberdeskMachineId,
+            cyberdeskMachineName: other.cyberdeskMachineName,
             tags: other.tags.toList(),
             forceAlwaysRelay: other.forceAlwaysRelay,
             rdpPort: other.rdpPort,

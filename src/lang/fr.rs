@@ -650,6 +650,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Clipboard is synchronized", "Le presse-papier est synchronisé"),
         ("Update client clipboard", "Actualiser le presse-papier du client"),
         ("Untagged", "Sans étiquette"),
+        ("Enter confirmation code {} in your browser", "Saisissez le code de confirmation {} dans votre navigateur"),
         ("new-version-of-{}-tip", "Une nouvelle version de {} est disponible"),
         ("Accessible devices", "Appareils accessibles"),
         ("upgrade_remote_rustdesk_client_to_{}_tip", "Veuillez mettre le client RustDesk distant à jour vers la version {} ou ultérieure !"),

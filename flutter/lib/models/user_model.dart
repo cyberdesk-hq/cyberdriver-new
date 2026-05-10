@@ -20,6 +20,9 @@ class UserModel {
   final RxString avatar = ''.obs;
   final RxBool isAdmin = false.obs;
   final RxString networkError = ''.obs;
+  final RxList<CyberdeskOrganization> organizations =
+      <CyberdeskOrganization>[].obs;
+  final RxString selectedOrganizationId = ''.obs;
   bool get isLogin => userName.isNotEmpty;
   String get displayNameOrUserName =>
       displayName.value.trim().isEmpty ? userName.value : displayName.value;
@@ -47,7 +50,7 @@ class UserModel {
     });
   }
 
-  void refreshCurrentUser() async {
+  Future<void> refreshCurrentUser() async {
     if (bind.isDisableAccount()) return;
     networkError.value = '';
     final token = bind.mainGetLocalOption(key: 'access_token');
@@ -66,11 +69,10 @@ class UserModel {
       refreshingUser = true;
       final http.Response response;
       try {
+        final headers = getHttpHeaders();
+        headers['Content-Type'] = 'application/json';
         response = await http.post(Uri.parse('$url/api/currentUser'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token'
-            },
+            headers: headers,
             body: json.encode(body));
       } catch (e) {
         networkError.value = e.toString();
@@ -89,7 +91,7 @@ class UserModel {
       }
 
       final user = UserPayload.fromJson(data);
-      _parseAndUpdateUser(user);
+      await _parseAndUpdateUser(user);
     } catch (e) {
       debugPrint('Failed to refreshCurrentUser: $e');
     } finally {
@@ -117,12 +119,23 @@ class UserModel {
       userName.value = (userInfo['name'] ?? '').toString();
       displayName.value = (userInfo['display_name'] ?? '').toString();
       avatar.value = (userInfo['avatar'] ?? '').toString();
+      selectedOrganizationId.value =
+          (userInfo['selected_organization_id'] ?? '').toString();
+      final rawOrganizations = userInfo['organizations'];
+      organizations.value = rawOrganizations is List
+          ? rawOrganizations
+              .whereType<Map<String, dynamic>>()
+              .map((org) => CyberdeskOrganization.fromJson(org))
+              .toList()
+          : [];
     }
   }
 
   Future<void> reset({bool resetOther = false}) async {
     await bind.mainSetLocalOption(key: 'access_token', value: '');
     await bind.mainSetLocalOption(key: 'user_info', value: '');
+    await bind.mainSetLocalOption(
+        key: 'cyberdesk_selected_organization_id', value: '');
     if (resetOther) {
       await gFFI.abModel.reset();
       await gFFI.groupModel.reset();
@@ -130,18 +143,43 @@ class UserModel {
     userName.value = '';
     displayName.value = '';
     avatar.value = '';
+    selectedOrganizationId.value = '';
+    organizations.clear();
   }
 
-  _parseAndUpdateUser(UserPayload user) {
+  Future<void> _parseAndUpdateUser(UserPayload user) async {
     userName.value = user.name;
     displayName.value = user.displayName;
     avatar.value = user.avatar;
     isAdmin.value = user.isAdmin;
-    bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(user));
+    organizations.value = user.organizations;
+    selectedOrganizationId.value = user.selectedOrganizationId;
+    await bind.mainSetLocalOption(
+        key: 'cyberdesk_selected_organization_id',
+        value: selectedOrganizationId.value);
+    await bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(user));
     if (isWeb) {
       // ugly here, tmp solution
-      bind.mainSetLocalOption(key: 'verifier', value: user.verifier ?? '');
+      await bind.mainSetLocalOption(key: 'verifier', value: user.verifier ?? '');
     }
+  }
+
+  Future<void> switchOrganization(String organizationId) async {
+    if (organizationId == selectedOrganizationId.value) return;
+    selectedOrganizationId.value = organizationId;
+    selectedOrganizationId.refresh();
+    await bind.mainSetLocalOption(
+        key: 'cyberdesk_selected_organization_id', value: organizationId);
+    final userInfo = getLocalUserInfo();
+    if (userInfo != null) {
+      userInfo['selected_organization_id'] = organizationId;
+      await bind.mainSetLocalOption(key: 'user_info', value: jsonEncode(userInfo));
+    }
+    // Org-scoped lists are cached locally; clear before refetching so the UI
+    // cannot keep showing stale peers from the previous organization.
+    await gFFI.abModel.reset();
+    await gFFI.groupModel.reset();
+    await refreshCurrentUser();
   }
 
   // update ab and group status
@@ -198,10 +236,11 @@ class UserModel {
       throw RequestException(0, body['error']);
     }
 
-    return getLoginResponseFromAuthBody(body);
+    return await getLoginResponseFromAuthBody(body);
   }
 
-  LoginResponse getLoginResponseFromAuthBody(Map<String, dynamic> body) {
+  Future<LoginResponse> getLoginResponseFromAuthBody(
+      Map<String, dynamic> body) async {
     final LoginResponse loginResponse;
     try {
       loginResponse = LoginResponse.fromJson(body);
@@ -213,7 +252,7 @@ class UserModel {
     final isLogInDone = loginResponse.type == HttpType.kAuthResTypeToken &&
         loginResponse.access_token != null;
     if (isLogInDone && loginResponse.user != null) {
-      _parseAndUpdateUser(loginResponse.user!);
+      await _parseAndUpdateUser(loginResponse.user!);
     }
 
     return loginResponse;

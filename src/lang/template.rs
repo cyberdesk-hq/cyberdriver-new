@@ -189,6 +189,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Enable RDP session sharing", ""),
         ("Auto Login", ""),
         ("Enable direct IP access", ""),
+        ("Enter confirmation code {} in your browser", ""),
         ("Rename", ""),
         ("Space", ""),
         ("Create desktop shortcut", ""),

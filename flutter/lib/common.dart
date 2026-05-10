@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:back_button_interceptor/back_button_interceptor.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -1620,6 +1619,10 @@ mainSetLocalBoolOption(String key, bool value) async {
   await bind.mainSetLocalOption(key: key, value: v);
 }
 
+Future<bool> mainSetLocalOption(String key, String value) async {
+  return await bind.mainSetLocalOption(key: key, value: value);
+}
+
 bool mainGetLocalBoolOptionSync(String key) {
   return option2bool(key, bind.mainGetLocalOption(key: key));
 }
@@ -2486,7 +2489,8 @@ connectMainDesktop(String id,
     bool? forceRelay,
     String? password,
     String? connToken,
-    bool? isSharedPassword}) async {
+    bool? isSharedPassword,
+    String? tabLabel}) async {
   if (isFileTransfer) {
     await rustDeskWinManager.newFileTransfer(id,
         password: password,
@@ -2515,7 +2519,9 @@ connectMainDesktop(String id,
     await rustDeskWinManager.newRemoteDesktop(id,
         password: password,
         isSharedPassword: isSharedPassword,
-        forceRelay: forceRelay);
+        connToken: connToken,
+        forceRelay: forceRelay,
+        tabLabel: tabLabel);
   }
 }
 
@@ -2533,7 +2539,8 @@ connect(BuildContext context, String id,
     bool forceRelay = false,
     String? password,
     String? connToken,
-    bool? isSharedPassword}) async {
+    bool? isSharedPassword,
+    String? tabLabel}) async {
   if (id == '') return;
   if (!isDesktop || desktopType == DesktopType.main) {
     try {
@@ -2566,6 +2573,8 @@ connect(BuildContext context, String id,
         password: password,
         isSharedPassword: isSharedPassword,
         forceRelay: forceRelay,
+        connToken: connToken,
+        tabLabel: tabLabel,
       );
     } else {
       await rustDeskWinManager.call(WindowType.Main, kWindowConnect, {
@@ -2579,6 +2588,7 @@ connect(BuildContext context, String id,
         'isSharedPassword': isSharedPassword,
         'forceRelay': forceRelay,
         'connToken': connToken,
+        'tabLabel': tabLabel,
       });
     }
   } else {
@@ -2689,9 +2699,15 @@ connect(BuildContext context, String id,
 }
 
 Map<String, String> getHttpHeaders() {
-  return {
+  final headers = {
     'Authorization': 'Bearer ${bind.mainGetLocalOption(key: 'access_token')}'
   };
+  final organizationId =
+      bind.mainGetLocalOption(key: 'cyberdesk_selected_organization_id').trim();
+  if (organizationId.isNotEmpty) {
+    headers['X-Cyberdesk-Organization-Id'] = organizationId;
+  }
+  return headers;
 }
 
 // Simple wrapper of built-in types for reference use.
@@ -3084,6 +3100,14 @@ Future<void> start_service(bool is_start) async {
       !isMacOS ||
       await callMainCheckSuperUserPermission();
   if (checked) {
+    if (is_start &&
+        isMacOS &&
+        bind.mainIsInstalled() &&
+        !bind.mainIsInstalledDaemon(prompt: false)) {
+      if (!bind.mainIsInstalledDaemon(prompt: true)) {
+        return;
+      }
+    }
     mainSetBoolOption(kOptionStopService, !is_start);
   }
 }

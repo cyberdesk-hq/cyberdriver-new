@@ -16,9 +16,7 @@
 // M7 shell/internal basics:
 //   POST /computer/shell/powershell/{simple,test,exec,session}
 //   GET /internal/diagnostics
-//   POST /internal/{shutdown,keepalive/remote/*}
-// Future milestones add:
-//       POST /internal/update
+//   POST /internal/{shutdown,update,keepalive/remote/*}
 //
 // Unknown paths return 501 + a small JSON error body so
 // the caller can clearly tell "your tunnel is alive, this endpoint is
@@ -48,6 +46,9 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
     let meta = request.meta;
     let body = request.body;
     let path = path_without_query(&meta.path);
+    if path.starts_with("/computer/") || path.starts_with("computer/") {
+        internal::record_remote_activity();
+    }
     match (meta.method.as_str(), path) {
         ("GET", "/computer/display/dimensions") => match display::dimensions() {
             Ok(body) => (200, body, "application/json"),
@@ -121,19 +122,17 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(500, format!("diagnostics failed: {err:#}")),
         },
-        ("POST", "/internal/shutdown") => {
-            if !internal::shutdown_enabled() {
-                json_error(
-                    403,
-                    "internal shutdown is disabled on this agent".to_string(),
-                )
-            } else {
-                match internal::shutdown(body) {
-                    Ok(body) => (200, body, "application/json"),
-                    Err(err) => json_error(500, format!("shutdown failed: {err:#}")),
-                }
-            }
-        }
+        // Accepted product risk: these destructive controls are intentionally
+        // remotely callable through the authenticated Cyberdesk tunnel so the
+        // dashboard can recover/update unattended machines without local setup.
+        ("POST", "/internal/shutdown") => match internal::shutdown(body) {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(500, format!("shutdown failed: {err:#}")),
+        },
+        ("POST", "/internal/update") => match internal::update(body) {
+            Ok(body) => (200, body, "application/json"),
+            Err(err) => json_error(500, format!("update failed: {err:#}")),
+        },
         ("POST", "/internal/keepalive/remote/activity") => match internal::keepalive_activity() {
             Ok(response) => response,
             Err(err) => json_error(500, format!("keepalive activity failed: {err:#}")),

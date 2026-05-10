@@ -186,6 +186,57 @@ void changeIdDialog() {
   });
 }
 
+void generateIdentityDialog() {
+  var isInProgress = false;
+  var result = "";
+  gFFI.dialogManager.show((setState, close, context) {
+    submit() async {
+      setState(() {
+        isInProgress = true;
+        result = "";
+      });
+      final newId = await bind.mainGenerateNewIdentity();
+      if (newId.isEmpty) {
+        setState(() {
+          isInProgress = false;
+          result = translate("Failed to generate new identity");
+        });
+        return;
+      }
+      await gFFI.serverModel.fetchID();
+      setState(() {
+        isInProgress = false;
+        result = "${translate("New RustDesk peer ID")}: $newId";
+      });
+    }
+
+    return CustomAlertDialog(
+      title: Text(translate("Generate new identity")),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(translate(
+              "This will generate a new RustDesk peer ID, keypair, and Cyberdesk machine fingerprint. Cyberdesk will treat this installation as a new machine after Cyberdriver reconnects. Use this before creating machine images or when intentionally cloning a host.")),
+          const SizedBox(height: 8.0),
+          Text(translate(
+              "Reinstalling Cyberdriver without this action keeps the existing identity.")),
+          if (result.isNotEmpty) ...[
+            const SizedBox(height: 8.0),
+            Text(result),
+          ],
+          if (isInProgress) const LinearProgressIndicator(),
+        ],
+      ),
+      actions: [
+        dialogButton("Cancel", onPressed: close, isOutline: true),
+        dialogButton("Generate", onPressed: isInProgress ? null : submit),
+      ],
+      onSubmit: submit,
+      onCancel: close,
+    );
+  });
+}
+
 void changeWhiteList({Function()? callback}) async {
   final curWhiteList = await bind.mainGetOption(key: kOptionWhitelist);
   var newWhiteListField = curWhiteList == defaultOptionWhitelist

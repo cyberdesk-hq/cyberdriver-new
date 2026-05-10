@@ -1,4 +1,4 @@
-﻿<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
 	xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
 	xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
@@ -11,11 +11,14 @@
 		<!--<PropertyRef Id="UpgradesFile" />-->
 
 		<PropertyRef Id="AddRemovePropertiesFile" />
-		<Property Id="INSTALL_AS_SERVICE" Secure="yes" />
+		<!-- Cyberdriver 1.x is service-first by default; pass INSTALL_AS_SERVICE=0 to opt out. -->
+		<Property Id="INSTALL_AS_SERVICE" Value="1" Secure="yes" />
 		<Property Id="REGISTER_NOW" Secure="yes" />
 		<Property Id="CYBERDESK_API_BASE" Secure="yes" />
+		<Property Id="CYBERDESK_ALLOW_INSECURE_API_BASE" Secure="yes" />
+		<!-- WiX v4 rejects authoring MsiHiddenProperties directly; Hidden="yes" is the supported form. -->
 		<Property Id="APIKEY" Secure="yes" Hidden="yes" />
-		<Property Id="MsiHiddenProperties" Value="APIKEY;ConfigureCyberdesk" />
+		<Property Id="ConfigureCyberdesk" Hidden="yes" />
 
 		<Media Id="1" Cabinet="cab1.cab" EmbedCab="yes" CompressionLevel="high" />
 		<Icon Id="AppIcon" SourceFile="Resources\icon.ico" />
