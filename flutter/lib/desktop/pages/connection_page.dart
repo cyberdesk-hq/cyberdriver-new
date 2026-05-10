@@ -270,6 +270,7 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
   final _searchController = TextEditingController();
   String _searchText = '';
   String _refreshError = '';
+  String? _selfId;
   bool _pullingPeers = false;
   bool _refreshing = false;
 
@@ -283,6 +284,7 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
         });
       }
     });
+    _loadSelfId();
     _refreshPeers();
     _onlineTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _queryOnlineStates();
@@ -334,6 +336,25 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
     }
   }
 
+  Future<void> _loadSelfId() async {
+    try {
+      final selfId = (await bind.mainGetMyId()).replaceAll(' ', '');
+      if (mounted) {
+        setState(() {
+          _selfId = selfId;
+        });
+        _queryOnlineStates();
+      }
+    } catch (e) {
+      debugPrint('Failed to load desktop ID: $e');
+      if (mounted) {
+        setState(() {
+          _selfId = '';
+        });
+      }
+    }
+  }
+
   void _queryOnlineStates() {
     final ids = _orgDesktops(gFFI.abModel.peersModel.peers)
         .map((peer) => peer.id)
@@ -345,7 +366,10 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
   }
 
   List<Peer> _orgDesktops(List<Peer> peers) {
-    final selfId = gFFI.serverModel.serverId.text.replaceAll(' ', '');
+    final selfId = _selfId;
+    if (selfId == null) {
+      return [];
+    }
     return peers.where((peer) => peer.id != selfId).toList();
   }
 
@@ -449,7 +473,7 @@ class _CyberdeskOrgDesktopGridState extends State<_CyberdeskOrgDesktopGrid> {
   }
 
   Widget _buildEmptyState(BuildContext context, List<Peer> allDesktops) {
-    if (_refreshing) {
+    if (_refreshing || _selfId == null) {
       return Center(
         child: Text(
           translate('Loading...'),
