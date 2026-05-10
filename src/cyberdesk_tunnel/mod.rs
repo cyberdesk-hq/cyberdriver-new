@@ -448,33 +448,115 @@ fn persistent_fingerprint() -> String {
 }
 
 fn legacy_fingerprint() -> Option<(String, PathBuf)> {
-    let path = legacy_config_path()?;
-    let data = std::fs::read_to_string(&path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&data).ok()?;
-    let fingerprint = value.get("fingerprint")?.as_str()?.trim();
-    if fingerprint.is_empty() {
-        return None;
+    for path in legacy_config_paths() {
+        let data = match std::fs::read_to_string(&path) {
+            Ok(data) => data,
+            Err(_) => continue,
+        };
+        let value: serde_json::Value = match serde_json::from_str(&data) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let fingerprint = value
+            .get("fingerprint")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .unwrap_or_default();
+        if !fingerprint.is_empty() {
+            return Some((fingerprint.to_string(), path));
+        }
     }
-    Some((fingerprint.to_string(), path))
+    None
 }
 
-fn legacy_config_path() -> Option<PathBuf> {
+fn legacy_config_paths() -> Vec<PathBuf> {
     #[cfg(windows)]
     {
-        std::env::var_os("LOCALAPPDATA")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(PathBuf::from)
-            .map(|base| base.join(".cyberdriver").join("config.json"))
+        let mut candidates = Vec::new();
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            candidates.push(
+                PathBuf::from(local_app_data)
+                    .join(".cyberdriver")
+                    .join("config.json"),
+            );
+        }
+        if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+            candidates.push(
+                PathBuf::from(user_profile)
+                    .join("AppData")
+                    .join("Local")
+                    .join(".cyberdriver")
+                    .join("config.json"),
+            );
+        }
+        if let Some(users_root) = windows_users_root() {
+            let mut user_candidates = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(users_root) {
+                for entry in entries.flatten() {
+                    let profile = entry.path();
+                    if !profile.is_dir() || is_windows_system_profile(&profile) {
+                        continue;
+                    }
+                    let config = profile
+                        .join("AppData")
+                        .join("Local")
+                        .join(".cyberdriver")
+                        .join("config.json");
+                    if let Ok(metadata) = std::fs::metadata(&config) {
+                        let modified = metadata.modified().ok();
+                        user_candidates.push((modified, config));
+                    }
+                }
+            }
+            user_candidates.sort_by(|left, right| right.0.cmp(&left.0));
+            candidates.extend(user_candidates.into_iter().map(|(_, path)| path));
+        }
+        dedupe_paths(candidates)
     }
     #[cfg(not(windows))]
     {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
+        let Some(base) = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| {
                 std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
-            })?;
-        Some(base.join(".cyberdriver").join("config.json"))
+            })
+        else {
+            return Vec::new();
+        };
+        vec![base.join(".cyberdriver").join("config.json")]
     }
+}
+
+#[cfg(windows)]
+fn windows_users_root() -> Option<PathBuf> {
+    std::env::var_os("SystemDrive")
+        .map(PathBuf::from)
+        .or_else(|| Some(PathBuf::from(r"C:")))
+        .map(|drive| drive.join("Users"))
+}
+
+#[cfg(windows)]
+fn is_windows_system_profile(profile: &std::path::Path) -> bool {
+    let Some(name) = profile.file_name().and_then(|name| name.to_str()) else {
+        return true;
+    };
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "all users" | "default" | "default user" | "public"
+    )
+}
+
+#[cfg(windows)]
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    let mut deduped = Vec::new();
+    for path in paths {
+        let key = path.to_string_lossy().to_ascii_lowercase();
+        if seen.insert(key) {
+            deduped.push(path);
+        }
+    }
+    deduped
 }
 
 #[cfg(test)]
