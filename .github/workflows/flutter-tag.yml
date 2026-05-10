@@ -1,4 +1,4 @@
-name: Flutter Tag Build
+name: Cyberdriver Test Release
 
 on:
   workflow_dispatch:
@@ -7,17 +7,10 @@ on:
         description: "GitHub release tag to create/update"
         required: false
         default: "test"
-      macos_only:
-        description: "Build only macOS desktop DMGs"
-        required: false
-        type: boolean
-        default: true
 
 jobs:
-  run-flutter-tag-build:
-    uses: ./.github/workflows/flutter-build.yml
+  build-windows-msi:
+    uses: ./.github/workflows/release-windows-msi.yml
     secrets: inherit
     with:
-      upload-artifact: true
-      upload-tag: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
-      macos_only: ${{ github.event_name == 'workflow_dispatch' && inputs.macos_only }}
+      release_tag: ${{ inputs.release_tag }}

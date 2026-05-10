@@ -1,13 +1,13 @@
-name: Full Flutter CI
+name: Cyberdriver Windows CI
 
 on:
-  # Temporarily manual-only while the Cyberdriver MVP release path is Windows
-  # service MSI focused. Keep this upstream RustDesk workflow available for
-  # future full Flutter/platform validation.
+  # Windows-only for launch. Keep the reusable full Flutter matrix in
+  # flutter-build.yml for future macOS/Linux/mobile validation.
   workflow_dispatch:
 
 jobs:
-  run-ci:
-    uses: ./.github/workflows/flutter-build.yml
+  build-windows-msi:
+    uses: ./.github/workflows/release-windows-msi.yml
+    secrets: inherit
     with:
-      upload-artifact: false
+      release_tag: "ci"

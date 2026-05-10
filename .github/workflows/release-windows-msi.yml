@@ -1,6 +1,12 @@
 name: Cyberdriver Windows MSI Release
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        type: string
+        required: false
+        default: "test"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -18,7 +24,7 @@ env:
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   VCPKG_DEFAULT_HOST_TRIPLET: "x64-windows-static"
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || 'test' }}
+  RELEASE_TAG: ${{ inputs.release_tag || 'test' }}
 
 jobs:
   generate-bridge:
