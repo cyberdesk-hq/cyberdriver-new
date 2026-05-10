@@ -179,8 +179,8 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: Cyberdriver ${{ env.RELEASE_TAG }}
-          prerelease: ${{ env.RELEASE_TAG == 'test' }}
-          make_latest: ${{ env.RELEASE_TAG != 'test' }}
+          prerelease: ${{ env.RELEASE_TAG == 'test' || env.RELEASE_TAG == 'ci' || env.RELEASE_TAG == 'nightly' }}
+          make_latest: ${{ env.RELEASE_TAG != 'test' && env.RELEASE_TAG != 'ci' && env.RELEASE_TAG != 'nightly' }}
           files: SignOutput/Cyberdriver-*-windows-x64.msi
           body: |
             Automated Cyberdriver Windows MSI build from `${{ github.ref_name }}`.
