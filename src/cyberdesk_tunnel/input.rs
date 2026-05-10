@@ -382,11 +382,15 @@ fn parse_key_group(group: &str) -> Result<ParsedKeyGroup> {
         }));
     }
 
-    let key = match key {
-        Some(KeyToken::Control(ControlKey::Unknown)) | None => {
-            bail!("unsupported key group '{group}'")
+    let key = if key.is_none() && modifiers.len() == 1 {
+        KeyToken::Control(modifiers.remove(0))
+    } else {
+        match key {
+            Some(KeyToken::Control(ControlKey::Unknown)) | None => {
+                bail!("unsupported key group '{group}'")
+            }
+            Some(key) => key,
         }
-        Some(key) => key,
     };
 
     Ok(ParsedKeyGroup { modifiers, key })
@@ -431,10 +435,19 @@ fn normalize_key_token(raw: &str) -> String {
 
 fn modifier_key(token: &str) -> Option<ControlKey> {
     match token {
-        "ctrl" | "control" | "ctl" => Some(ControlKey::Control),
-        "alt" | "option" | "opt" => Some(ControlKey::Alt),
-        "shift" => Some(ControlKey::Shift),
-        "win" | "windows" | "meta" | "super" | "cmd" | "command" => Some(ControlKey::Meta),
+        "ctrl" | "control" | "ctl" | "leftctrl" | "ctrlleft" | "lctrl" | "lcontrol" => {
+            Some(ControlKey::Control)
+        }
+        "rightctrl" | "ctrlright" | "rctrl" | "rcontrol" => Some(ControlKey::RControl),
+        "alt" | "option" | "opt" | "leftalt" | "altleft" | "lalt" => Some(ControlKey::Alt),
+        "rightalt" | "altright" | "ralt" => Some(ControlKey::RAlt),
+        "shift" | "leftshift" | "shiftleft" | "lshift" => Some(ControlKey::Shift),
+        "rightshift" | "shiftright" | "rshift" => Some(ControlKey::RShift),
+        "win" | "windows" | "window" | "meta" | "super" | "cmd" | "command" | "leftwin"
+        | "winleft" | "lwin" | "leftwindows" | "windowsleft" | "leftcmd" | "cmdleft"
+        | "leftcommand" | "commandleft" => Some(ControlKey::Meta),
+        "rightwin" | "winright" | "rwin" | "rightwindows" | "windowsright" | "rightcmd"
+        | "cmdright" | "rightcommand" | "commandright" => Some(ControlKey::RWin),
         _ => None,
     }
 }
@@ -565,4 +578,34 @@ fn normalize_text_for_typing(text: &str) -> String {
         .replace('\u{201D}', "\"")
         .replace('\u{2013}', "-")
         .replace('\u{2014}', "-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_key_group, KeyToken};
+    use hbb_common::message_proto::ControlKey;
+
+    fn control_key(group: &str) -> ControlKey {
+        match parse_key_group(group).expect("key group should parse").key {
+            KeyToken::Control(key) => key,
+            other => panic!("expected control key, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_standalone_windows_modifier_aliases() {
+        for alias in ["win", "windows", "window", "meta", "super", "cmd", "command"] {
+            assert_eq!(control_key(alias), ControlKey::Meta, "{alias}");
+        }
+    }
+
+    #[test]
+    fn parses_left_and_right_windows_modifier_aliases() {
+        for alias in ["leftwin", "winleft", "lwin", "leftcmd", "commandleft"] {
+            assert_eq!(control_key(alias), ControlKey::Meta, "{alias}");
+        }
+        for alias in ["rightwin", "winright", "rwin", "rightcmd", "commandright"] {
+            assert_eq!(control_key(alias), ControlKey::RWin, "{alias}");
+        }
+    }
 }
