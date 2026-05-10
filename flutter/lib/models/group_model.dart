@@ -223,7 +223,7 @@ class GroupModel {
 
   Future<bool> _getPeers(List<Peer> tmpPeers) async {
     try {
-      final selfId = await bind.mainGetMyId();
+      final selfId = (await bind.mainGetMyId()).replaceAll(' ', '');
       final api = "${await bind.mainGetApiServer()}/api/peers";
       var uri0 = Uri.parse(api);
       final pageSize = 100;
