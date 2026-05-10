@@ -3104,7 +3104,9 @@ Future<void> start_service(bool is_start) async {
         isMacOS &&
         bind.mainIsInstalled() &&
         !bind.mainIsInstalledDaemon(prompt: false)) {
-      bind.mainIsInstalledDaemon(prompt: true);
+      if (!bind.mainIsInstalledDaemon(prompt: true)) {
+        return;
+      }
     }
     mainSetBoolOption(kOptionStopService, !is_start);
   }
