@@ -489,7 +489,7 @@ fn legacy_config_paths() -> Vec<PathBuf> {
                     .join("config.json"),
             );
         }
-        if let Some(users_root) = windows_users_root() {
+        for users_root in windows_users_roots() {
             let mut user_candidates = Vec::new();
             if let Ok(entries) = std::fs::read_dir(users_root) {
                 for entry in entries.flatten() {
@@ -528,11 +528,18 @@ fn legacy_config_paths() -> Vec<PathBuf> {
 }
 
 #[cfg(windows)]
-fn windows_users_root() -> Option<PathBuf> {
-    std::env::var_os("SystemDrive")
-        .map(PathBuf::from)
-        .or_else(|| Some(PathBuf::from(r"C:")))
-        .map(|drive| drive.join("Users"))
+fn windows_users_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(system_drive) = std::env::var_os("SystemDrive") {
+        roots.push(PathBuf::from(system_drive).join("Users"));
+    }
+    if let Some(home_drive) = std::env::var_os("HOMEDRIVE") {
+        roots.push(PathBuf::from(home_drive).join("Users"));
+    }
+    for letter in b'A'..=b'Z' {
+        roots.push(PathBuf::from(format!("{}:\\Users", letter as char)));
+    }
+    dedupe_paths(roots)
 }
 
 #[cfg(windows)]
