@@ -698,19 +698,12 @@ fn run_command(
             });
         }
         if start.elapsed() >= timeout {
-            terminate_process_tree(&mut child);
-            let wait_error = child
-                .wait()
-                .err()
-                .map(|err| format!("failed to wait for timed-out PowerShell process: {err}"));
             let stdout = collect_output_after_timeout(stdout_reader);
             let stderr = collect_output_after_timeout(stderr_reader);
-            let timeout_message = wait_error.unwrap_or_else(|| {
-                format!(
-                    "Command timeout reached after {:.1} seconds. Process was terminated.",
-                    timeout.as_secs_f64()
-                )
-            });
+            let timeout_message = format!(
+                "Command timeout reached after {:.1} seconds. Process is continuing in the background.",
+                timeout.as_secs_f64()
+            );
             let stderr = if stderr.is_empty() {
                 timeout_message
             } else {
