@@ -1,0 +1,33 @@
+====================================
+CYBERDRIVER CLEANUP INSTRUCTIONS
+====================================
+
+PROBLEM: "Cyberdriver is already running" error preventing installation of old version
+
+QUICK FIX:
+
+1. Right-click PowerShell icon
+2. Click "Run as Administrator"
+3. Copy and paste this ONE LINE:
+
+Get-Process -Name "Cyberdriver","cyberdriver","rustdesk" -EA SilentlyContinue | Stop-Process -Force; Get-Service -Name "Cyberdriver","Cyberdriver Service","RustDesk" -EA SilentlyContinue | ForEach-Object { Stop-Service $_.Name -Force -EA SilentlyContinue; sc.exe delete $_.Name }; @("$env:ProgramFiles\Cyberdriver","${env:ProgramFiles(x86)}\Cyberdriver","$env:APPDATA\Cyberdriver","$env:LOCALAPPDATA\Cyberdriver","$env:ProgramData\Cyberdriver","C:\Windows\System32\config\systemprofile\AppData\Roaming\Cyberdriver","C:\Windows\System32\config\systemprofile\AppData\Local\Cyberdriver") | Where-Object { Test-Path $_ } | ForEach-Object { Remove-Item $_ -Recurse -Force -EA SilentlyContinue }; @("HKCU:\Software\Cyberdriver","HKLM:\Software\Cyberdriver","HKLM:\Software\WOW6432Node\Cyberdriver","HKCU:\Software\Classes\cyberdriver","HKLM:\Software\Classes\cyberdriver") | Where-Object { Test-Path $_ } | ForEach-Object { Remove-Item $_ -Recurse -Force -EA SilentlyContinue }; Get-ChildItem "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" -EA SilentlyContinue | Where-Object { $_.GetValue("DisplayName") -like "*Cyberdriver*" } | ForEach-Object { Remove-Item $_.PSPath -Recurse -Force -EA SilentlyContinue }; Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs","$env:ProgramData\Microsoft\Windows\Start Menu\Programs","$env:USERPROFILE\Desktop","$env:PUBLIC\Desktop" -Filter "*Cyberdriver*" -Recurse -EA SilentlyContinue | Remove-Item -Force -EA SilentlyContinue; Get-ScheduledTask -TaskName "*Cyberdriver*" -EA SilentlyContinue | Unregister-ScheduledTask -Confirm:$false; Write-Host "Cyberdriver cleanup complete! Restart if 'already running' message persists." -ForegroundColor Green
+
+4. Press Enter
+5. Restart your computer (or log out/in)
+6. Install the old Cyberdriver version
+
+ALTERNATIVE: Download and run the full script from:
+https://github.com/cyberdesk-hq/cyberdriver-new/cleanup-cyberdriver.ps1
+
+====================================
+
+What this does:
+✓ Stops all Cyberdriver processes
+✓ Removes Cyberdriver Windows service
+✓ Deletes all Cyberdriver files
+✓ Cleans registry entries
+✓ Removes shortcuts
+
+Safe: Only removes Cyberdriver, nothing else
+
+Need help? https://cyberdesk.io/support
