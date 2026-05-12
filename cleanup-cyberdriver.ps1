@@ -19,7 +19,7 @@ if (-not $isAdmin) {
 Write-Host "[1/8] Stopping Cyberdriver processes..." -ForegroundColor Yellow
 
 # Kill all Cyberdriver processes
-$processNames = @("Cyberdriver", "cyberdriver", "rustdesk")
+$processNames = @("Cyberdriver", "cyberdriver")
 foreach ($procName in $processNames) {
     $processes = Get-Process -Name $procName -ErrorAction SilentlyContinue
     if ($processes) {
@@ -32,7 +32,7 @@ foreach ($procName in $processNames) {
 Write-Host "[2/8] Stopping and removing Cyberdriver service..." -ForegroundColor Yellow
 
 # Stop and remove Windows service
-$serviceNames = @("Cyberdriver", "Cyberdriver Service", "RustDesk")
+$serviceNames = @("Cyberdriver", "Cyberdriver Service")
 foreach ($svcName in $serviceNames) {
     $service = Get-Service -Name $svcName -ErrorAction SilentlyContinue
     if ($service) {
@@ -52,9 +52,7 @@ Write-Host "[3/8] Removing installation directories..." -ForegroundColor Yellow
 # Remove program files
 $programDirs = @(
     "$env:ProgramFiles\Cyberdriver",
-    "${env:ProgramFiles(x86)}\Cyberdriver",
-    "$env:ProgramFiles\RustDesk",
-    "${env:ProgramFiles(x86)}\RustDesk"
+    "${env:ProgramFiles(x86)}\Cyberdriver"
 )
 
 foreach ($dir in $programDirs) {
@@ -71,9 +69,7 @@ $appDataDirs = @(
     "$env:APPDATA\Cyberdriver",
     "$env:APPDATA\Cyberdesk",
     "$env:LOCALAPPDATA\Cyberdriver",
-    "$env:LOCALAPPDATA\Cyberdesk",
-    "$env:APPDATA\RustDesk",
-    "$env:LOCALAPPDATA\RustDesk"
+    "$env:LOCALAPPDATA\Cyberdesk"
 )
 
 foreach ($dir in $appDataDirs) {
@@ -86,8 +82,7 @@ foreach ($dir in $appDataDirs) {
 # Remove ProgramData directories (all users)
 $programDataDirs = @(
     "$env:ProgramData\Cyberdriver",
-    "$env:ProgramData\Cyberdesk",
-    "$env:ProgramData\RustDesk"
+    "$env:ProgramData\Cyberdesk"
 )
 
 foreach ($dir in $programDataDirs) {
@@ -123,10 +118,7 @@ $registryPaths = @(
     "HKLM:\Software\WOW6432Node\Cyberdriver",
     "HKLM:\Software\WOW6432Node\Cyberdesk",
     "HKCU:\Software\Classes\cyberdriver",
-    "HKLM:\Software\Classes\cyberdriver",
-    "HKCU:\Software\RustDesk",
-    "HKLM:\Software\RustDesk",
-    "HKLM:\Software\WOW6432Node\RustDesk"
+    "HKLM:\Software\Classes\cyberdriver"
 )
 
 foreach ($regPath in $registryPaths) {
@@ -215,8 +207,7 @@ Write-Host "[8/8] Cleaning temporary files..." -ForegroundColor Yellow
 # Clean temp files
 $tempDirs = @(
     "$env:TEMP\Cyberdriver*",
-    "$env:TEMP\Cyberdesk*",
-    "$env:TEMP\rustdesk*"
+    "$env:TEMP\Cyberdesk*"
 )
 
 foreach ($tempPattern in $tempDirs) {
