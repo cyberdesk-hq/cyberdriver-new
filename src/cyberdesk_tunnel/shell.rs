@@ -31,7 +31,7 @@ use std::{
 const MAX_COMMAND_CHARS: usize = 32 * 1024;
 const MAX_OUTPUT_CHARS: usize = 64 * 1024;
 const MAX_TIMEOUT_SECONDS: f64 = 180.0;
-const MAX_BACKGROUND_COMMANDS: usize = 4;
+const MAX_BACKGROUND_COMMANDS: usize = 10;
 const MAX_SESSIONS: usize = 16;
 const TRUNCATED_MARKER: &str = "\n...<truncated>";
 #[cfg(windows)]
