@@ -848,8 +848,8 @@ fn spawn_background_command_reaper(
 ) {
     thread::spawn(move || {
         let _ = child.wait();
-        let _ = collect_output(stdout_reader);
-        let _ = collect_output(stderr_reader);
+        let _ = collect_output_after_timeout(stdout_reader);
+        let _ = collect_output_after_timeout(stderr_reader);
         BACKGROUND_COMMANDS.fetch_sub(1, Ordering::AcqRel);
     });
 }
