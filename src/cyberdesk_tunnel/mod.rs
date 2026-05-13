@@ -41,6 +41,10 @@ mod shell;
 const API_KEY_ENC_VERSION: &str = "00";
 const API_KEY_MAX_LEN: usize = 4096;
 pub const REMOTE_KEEPALIVE_FOR_OPTION: &str = "cyberdesk_remote_keepalive_for";
+const INITIAL_RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
+const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(16);
+const STABLE_CONNECTION_RESET_AFTER: Duration = Duration::from_secs(10);
+const MAX_BACKOFF_WARNING_THRESHOLD: u8 = 3;
 
 static TUNNEL_CONFIG_REVISION: AtomicU64 = AtomicU64::new(0);
 static TUNNEL_TASK_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -108,7 +112,7 @@ pub fn spawn_if_enabled() {
     // Schedule onto RustDesk's existing tokio runtime via hbb_common's
     // re-export. We deliberately do NOT create a new runtime here.
     hbb_common::tokio::spawn(async move {
-        let mut backoff = Duration::from_secs(1);
+        let mut backoff = INITIAL_RECONNECT_BACKOFF;
         let mut max_backoff_failures = 0_u8;
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
@@ -117,7 +121,7 @@ pub fn spawn_if_enabled() {
                 if config_change_rx.changed().await.is_err() {
                     break;
                 }
-                backoff = Duration::from_secs(1);
+                backoff = INITIAL_RECONNECT_BACKOFF;
                 max_backoff_failures = 0;
                 continue;
             };
@@ -143,7 +147,7 @@ pub fn spawn_if_enabled() {
                     } else {
                         log::info!("cyberdesk_tunnel: config changed; reconnecting active tunnel");
                     }
-                    backoff = Duration::from_secs(1);
+                    backoff = INITIAL_RECONNECT_BACKOFF;
                     max_backoff_failures = 0;
                     continue;
                 }
@@ -152,7 +156,7 @@ pub fn spawn_if_enabled() {
             match &result {
                 Ok(()) => {
                     log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
-                    backoff = Duration::from_secs(1);
+                    backoff = INITIAL_RECONNECT_BACKOFF;
                     max_backoff_failures = 0;
                 }
                 Err(e) => {
@@ -168,15 +172,24 @@ pub fn spawn_if_enabled() {
                         break;
                     }
                     if retry_after.is_some() {
-                        backoff = Duration::from_secs(1);
+                        backoff = INITIAL_RECONNECT_BACKOFF;
                         max_backoff_failures = 0;
-                    } else if backoff >= Duration::from_secs(16) {
+                    } else if let Some(connected_for) = client::connected_for_error(e)
+                        .filter(|connected_for| *connected_for >= STABLE_CONNECTION_RESET_AFTER)
+                    {
+                        log::info!(
+                            "cyberdesk_tunnel: tunnel was stable for {:.1}s before dropping; resetting reconnect backoff",
+                            connected_for.as_secs_f64()
+                        );
+                        backoff = INITIAL_RECONNECT_BACKOFF;
+                        max_backoff_failures = 0;
+                    } else if backoff >= MAX_RECONNECT_BACKOFF {
                         max_backoff_failures = max_backoff_failures.saturating_add(1);
-                        if max_backoff_failures >= 3 {
+                        if should_log_max_backoff_warning(max_backoff_failures) {
                             log::error!(
-                                "cyberdesk_tunnel: max reconnect backoff failed 3 times; exiting for service manager restart"
+                                "cyberdesk_tunnel: max reconnect backoff failed {} times; continuing to retry because no supervisor is guaranteed",
+                                max_backoff_failures
                             );
-                            std::process::exit(75);
                         }
                     } else {
                         max_backoff_failures = 0;
@@ -187,7 +200,7 @@ pub fn spawn_if_enabled() {
             let sleep_for = retry_after.unwrap_or_else(|| jittered_backoff(backoff));
             hbb_common::tokio::time::sleep(sleep_for).await;
             if retry_after.is_none() {
-                backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
+                backoff = std::cmp::min(backoff * 2, MAX_RECONNECT_BACKOFF);
             }
         }
         TUNNEL_TASK_ACTIVE.store(false, Ordering::SeqCst);
@@ -217,6 +230,11 @@ fn jittered_backoff(base: Duration) -> Duration {
     } else {
         base.saturating_sub(Duration::from_millis((-jitter_ms) as u64))
     }
+}
+
+fn should_log_max_backoff_warning(failures: u8) -> bool {
+    failures == MAX_BACKOFF_WARNING_THRESHOLD
+        || (failures > MAX_BACKOFF_WARNING_THRESHOLD && failures % 10 == 0)
 }
 
 fn random_jitter_ms(range_ms: u64) -> u64 {
@@ -568,7 +586,10 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_configured_api_key, API_KEY_ENC_VERSION, API_KEY_MAX_LEN};
+    use super::{
+        decode_configured_api_key, should_log_max_backoff_warning, API_KEY_ENC_VERSION,
+        API_KEY_MAX_LEN,
+    };
     use hbb_common::password_security::encrypt_str_or_original;
 
     #[test]
@@ -604,5 +625,16 @@ mod tests {
         encrypted.push('x');
 
         assert_eq!(decode_configured_api_key(&encrypted), None);
+    }
+
+    #[test]
+    fn max_backoff_warning_logs_at_threshold_and_periodically() {
+        assert!(!should_log_max_backoff_warning(1));
+        assert!(!should_log_max_backoff_warning(2));
+        assert!(should_log_max_backoff_warning(3));
+        assert!(!should_log_max_backoff_warning(4));
+        assert!(should_log_max_backoff_warning(10));
+        assert!(!should_log_max_backoff_warning(11));
+        assert!(should_log_max_backoff_warning(20));
     }
 }
