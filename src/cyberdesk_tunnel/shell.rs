@@ -710,9 +710,10 @@ fn run_command(
                     format!(
                         concat!(
                             "Command timeout reached after {:.1} seconds. ",
-                            "Process {pid} is continuing in the background."
+                            "Process {} is continuing in the background."
                         ),
-                        timeout.as_secs_f64()
+                        timeout.as_secs_f64(),
+                        pid
                     ),
                     None,
                 )
@@ -725,10 +726,11 @@ fn run_command(
                     format!(
                         concat!(
                             "Command timeout reached after {:.1} seconds. ",
-                            "Process was terminated because the maximum of {MAX_BACKGROUND_COMMANDS} ",
+                            "Process was terminated because the maximum of {} ",
                             "background commands is already running."
                         ),
-                        timeout.as_secs_f64()
+                        timeout.as_secs_f64(),
+                        MAX_BACKGROUND_COMMANDS
                     ),
                     Some("too many background PowerShell commands are already running".to_string()),
                 )
