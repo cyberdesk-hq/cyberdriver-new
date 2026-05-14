@@ -23,10 +23,10 @@ use serde_derive::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering},
         Mutex,
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 mod client;
@@ -37,15 +37,36 @@ mod fs;
 mod input;
 mod internal;
 mod shell;
+#[cfg(windows)]
+pub(crate) mod user_context;
 
 const API_KEY_ENC_VERSION: &str = "00";
 const API_KEY_MAX_LEN: usize = 4096;
 pub const REMOTE_KEEPALIVE_FOR_OPTION: &str = "cyberdesk_remote_keepalive_for";
+pub const TUNNEL_PAUSED_OPTION: &str = "cyberdesk_tunnel_paused";
+const INITIAL_RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
+const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(16);
+const STABLE_CONNECTION_RESET_AFTER: Duration = Duration::from_secs(10);
+const MAX_BACKOFF_WARNING_THRESHOLD: u32 = 3;
+const TUNNEL_STATUS_DISABLED: u8 = 0;
+const TUNNEL_STATUS_STOPPED: u8 = 1;
+const TUNNEL_STATUS_CONNECTING: u8 = 2;
+const TUNNEL_STATUS_CONNECTED: u8 = 3;
+const TUNNEL_STATUS_RECONNECTING: u8 = 4;
+const TUNNEL_STATUS_RATE_LIMITED: u8 = 5;
+const TUNNEL_STATUS_AUTH_REJECTED: u8 = 6;
+const TUNNEL_STATUS_MACHINE_LIMIT_REACHED: u8 = 7;
 
 static TUNNEL_CONFIG_REVISION: AtomicU64 = AtomicU64::new(0);
 static TUNNEL_TASK_ACTIVE: AtomicBool = AtomicBool::new(false);
 static TUNNEL_CONFIG_CHANGE_TX: Mutex<Option<hbb_common::tokio::sync::watch::Sender<u64>>> =
     Mutex::new(None);
+static TUNNEL_STATUS: AtomicU8 = AtomicU8::new(TUNNEL_STATUS_DISABLED);
+static TUNNEL_STATUS_CHANGED_SECS: AtomicU64 = AtomicU64::new(0);
+static TUNNEL_LAST_CONNECTED_SECS: AtomicU64 = AtomicU64::new(0);
+static TUNNEL_RETRY_AFTER_SECS: AtomicU64 = AtomicU64::new(0);
+static TUNNEL_RECONNECT_FAILURES: AtomicU32 = AtomicU32::new(0);
+static TUNNEL_LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
 fn path_without_query(path: &str) -> &str {
     path.split_once('?').map(|(path, _)| path).unwrap_or(path)
@@ -83,6 +104,22 @@ pub fn spawn_if_enabled() {
             "cyberdesk_tunnel: API key not set; tunnel disabled (this is fine for \
              client-mode installs)"
         );
+        set_tunnel_status(
+            TUNNEL_STATUS_DISABLED,
+            Some("Cyberdesk API key is not configured".to_string()),
+            None,
+            0,
+        );
+        return;
+    }
+    if tunnel_paused() {
+        log::info!("cyberdesk_tunnel: tunnel paused by local user");
+        set_tunnel_status(
+            TUNNEL_STATUS_STOPPED,
+            Some("Cyberdesk tunnel is disconnected by local user request".to_string()),
+            None,
+            0,
+        );
         return;
     }
 
@@ -90,6 +127,12 @@ pub fn spawn_if_enabled() {
 
     if TUNNEL_TASK_ACTIVE.swap(true, Ordering::SeqCst) {
         log::info!("cyberdesk_tunnel: tunnel task already running; signaling config change");
+        set_tunnel_status(
+            TUNNEL_STATUS_RECONNECTING,
+            Some("Configuration changed; reconnecting tunnel".to_string()),
+            None,
+            0,
+        );
         signal_tunnel_config_changed();
         return;
     }
@@ -98,6 +141,7 @@ pub fn spawn_if_enabled() {
         "cyberdesk_tunnel: spawning tunnel client (api_base={})",
         api_base
     );
+    set_tunnel_status(TUNNEL_STATUS_CONNECTING, None, None, 0);
     internal::spawn_keepalive_loop();
     let (config_change_tx, mut config_change_rx) =
         hbb_common::tokio::sync::watch::channel(TUNNEL_CONFIG_REVISION.load(Ordering::SeqCst));
@@ -108,16 +152,37 @@ pub fn spawn_if_enabled() {
     // Schedule onto RustDesk's existing tokio runtime via hbb_common's
     // re-export. We deliberately do NOT create a new runtime here.
     hbb_common::tokio::spawn(async move {
-        let mut backoff = Duration::from_secs(1);
-        let mut max_backoff_failures = 0_u8;
+        let mut backoff = INITIAL_RECONNECT_BACKOFF;
+        let mut max_backoff_failures = 0_u32;
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
-            let Some(api_key) = configured_api_key() else {
-                log::info!("cyberdesk_tunnel: API key cleared; tunnel idle until reconfigured");
+            if tunnel_paused() {
+                log::info!("cyberdesk_tunnel: tunnel paused; idle until re-enabled");
+                set_tunnel_status(
+                    TUNNEL_STATUS_STOPPED,
+                    Some("Cyberdesk tunnel is disconnected by local user request".to_string()),
+                    None,
+                    0,
+                );
                 if config_change_rx.changed().await.is_err() {
                     break;
                 }
-                backoff = Duration::from_secs(1);
+                backoff = INITIAL_RECONNECT_BACKOFF;
+                max_backoff_failures = 0;
+                continue;
+            }
+            let Some(api_key) = configured_api_key() else {
+                log::info!("cyberdesk_tunnel: API key cleared; tunnel idle until reconfigured");
+                set_tunnel_status(
+                    TUNNEL_STATUS_DISABLED,
+                    Some("Cyberdesk API key was cleared".to_string()),
+                    None,
+                    0,
+                );
+                if config_change_rx.changed().await.is_err() {
+                    break;
+                }
+                backoff = INITIAL_RECONNECT_BACKOFF;
                 max_backoff_failures = 0;
                 continue;
             };
@@ -126,6 +191,7 @@ pub fn spawn_if_enabled() {
                 std::env::var("CYBERDESK_FINGERPRINT").unwrap_or_else(|_| persistent_fingerprint());
             let machine_name = crate::cyberdesk_cli::machine_name_from_env();
             let remote_keepalive_for = configured_remote_keepalive_for();
+            set_tunnel_status(TUNNEL_STATUS_CONNECTING, None, None, max_backoff_failures);
             let result = hbb_common::tokio::select! {
                 result = client::run(
                     api_key.clone(),
@@ -138,12 +204,32 @@ pub fn spawn_if_enabled() {
                 changed = config_change_rx.changed() => {
                     if changed.is_err() {
                         log::info!("cyberdesk_tunnel: config change channel closed; reconnecting");
+                    } else if tunnel_paused() {
+                        log::info!("cyberdesk_tunnel: tunnel paused; closing active tunnel");
+                        set_tunnel_status(
+                            TUNNEL_STATUS_STOPPED,
+                            Some("Cyberdesk tunnel is disconnected by local user request".to_string()),
+                            None,
+                            0,
+                        );
                     } else if configured_api_key().is_none() {
                         log::info!("cyberdesk_tunnel: API key cleared; closing active tunnel");
+                        set_tunnel_status(
+                            TUNNEL_STATUS_DISABLED,
+                            Some("Cyberdesk API key was cleared".to_string()),
+                            None,
+                            0,
+                        );
                     } else {
                         log::info!("cyberdesk_tunnel: config changed; reconnecting active tunnel");
+                        set_tunnel_status(
+                            TUNNEL_STATUS_RECONNECTING,
+                            Some("Configuration changed; reconnecting tunnel".to_string()),
+                            None,
+                            0,
+                        );
                     }
-                    backoff = Duration::from_secs(1);
+                    backoff = INITIAL_RECONNECT_BACKOFF;
                     max_backoff_failures = 0;
                     continue;
                 }
@@ -152,7 +238,13 @@ pub fn spawn_if_enabled() {
             match &result {
                 Ok(()) => {
                     log::info!("cyberdesk_tunnel: client exited cleanly; reconnecting");
-                    backoff = Duration::from_secs(1);
+                    set_tunnel_status(
+                        TUNNEL_STATUS_RECONNECTING,
+                        Some("Tunnel connection closed; reconnecting".to_string()),
+                        None,
+                        0,
+                    );
+                    backoff = INITIAL_RECONNECT_BACKOFF;
                     max_backoff_failures = 0;
                 }
                 Err(e) => {
@@ -165,20 +257,58 @@ pub fn spawn_if_enabled() {
                         log::error!(
                             "cyberdesk_tunnel: connection rejected; tunnel will not reconnect"
                         );
+                        if e.downcast_ref::<client::MachineLimitReached>().is_some() {
+                            set_tunnel_status(
+                                TUNNEL_STATUS_MACHINE_LIMIT_REACHED,
+                                Some(message),
+                                None,
+                                max_backoff_failures,
+                            );
+                        } else {
+                            set_tunnel_status(
+                                TUNNEL_STATUS_AUTH_REJECTED,
+                                Some(message),
+                                None,
+                                max_backoff_failures,
+                            );
+                        }
                         break;
                     }
                     if retry_after.is_some() {
-                        backoff = Duration::from_secs(1);
+                        set_tunnel_status(
+                            TUNNEL_STATUS_RATE_LIMITED,
+                            Some(message),
+                            retry_after,
+                            0,
+                        );
+                        backoff = INITIAL_RECONNECT_BACKOFF;
                         max_backoff_failures = 0;
-                    } else if backoff >= Duration::from_secs(16) {
+                    } else if let Some(connected_for) = client::connected_for_error(e)
+                        .filter(|connected_for| *connected_for >= STABLE_CONNECTION_RESET_AFTER)
+                    {
+                        log::info!(
+                            "cyberdesk_tunnel: tunnel was stable for {:.1}s before dropping; resetting reconnect backoff",
+                            connected_for.as_secs_f64()
+                        );
+                        set_tunnel_status(TUNNEL_STATUS_RECONNECTING, Some(message), None, 0);
+                        backoff = INITIAL_RECONNECT_BACKOFF;
+                        max_backoff_failures = 0;
+                    } else if backoff >= MAX_RECONNECT_BACKOFF {
                         max_backoff_failures = max_backoff_failures.saturating_add(1);
-                        if max_backoff_failures >= 3 {
+                        set_tunnel_status(
+                            TUNNEL_STATUS_RECONNECTING,
+                            Some(message),
+                            None,
+                            max_backoff_failures,
+                        );
+                        if should_log_max_backoff_warning(max_backoff_failures) {
                             log::error!(
-                                "cyberdesk_tunnel: max reconnect backoff failed 3 times; exiting for service manager restart"
+                                "cyberdesk_tunnel: max reconnect backoff failed {} times; continuing to retry because no supervisor is guaranteed",
+                                max_backoff_failures
                             );
-                            std::process::exit(75);
                         }
                     } else {
+                        set_tunnel_status(TUNNEL_STATUS_RECONNECTING, Some(message), None, 0);
                         max_backoff_failures = 0;
                     }
                 }
@@ -187,14 +317,151 @@ pub fn spawn_if_enabled() {
             let sleep_for = retry_after.unwrap_or_else(|| jittered_backoff(backoff));
             hbb_common::tokio::time::sleep(sleep_for).await;
             if retry_after.is_none() {
-                backoff = std::cmp::min(backoff * 2, Duration::from_secs(16));
+                backoff = std::cmp::min(backoff * 2, MAX_RECONNECT_BACKOFF);
             }
         }
         TUNNEL_TASK_ACTIVE.store(false, Ordering::SeqCst);
+        if configured_api_key().is_none() {
+            set_tunnel_status(
+                TUNNEL_STATUS_DISABLED,
+                Some("Cyberdesk API key is not configured".to_string()),
+                None,
+                0,
+            );
+        } else if !matches!(
+            TUNNEL_STATUS.load(Ordering::SeqCst),
+            TUNNEL_STATUS_AUTH_REJECTED | TUNNEL_STATUS_MACHINE_LIMIT_REACHED
+        ) {
+            set_tunnel_status(
+                TUNNEL_STATUS_STOPPED,
+                Some("Tunnel task stopped".to_string()),
+                None,
+                max_backoff_failures,
+            );
+        }
         if let Ok(mut tx) = TUNNEL_CONFIG_CHANGE_TX.lock() {
             *tx = None;
         }
     });
+}
+
+pub(super) fn mark_tunnel_connected() {
+    set_tunnel_status(TUNNEL_STATUS_CONNECTED, None, None, 0);
+    TUNNEL_LAST_CONNECTED_SECS.store(now_secs(), Ordering::SeqCst);
+}
+
+pub(crate) fn runtime_status() -> serde_json::Value {
+    let api_key_configured = configured_api_key().is_some();
+    let raw_status = TUNNEL_STATUS.load(Ordering::SeqCst);
+    let status = if !api_key_configured {
+        TUNNEL_STATUS_DISABLED
+    } else if tunnel_paused() {
+        TUNNEL_STATUS_STOPPED
+    } else if raw_status == TUNNEL_STATUS_DISABLED {
+        TUNNEL_STATUS_STOPPED
+    } else {
+        raw_status
+    };
+    let last_error = TUNNEL_LAST_ERROR
+        .lock()
+        .ok()
+        .and_then(|error| error.clone())
+        .unwrap_or_default();
+    serde_json::json!({
+        "state": tunnel_status_name(status),
+        "label": tunnel_status_label(status),
+        "message": tunnel_status_message(status),
+        "api_key_configured": api_key_configured,
+        "task_active": TUNNEL_TASK_ACTIVE.load(Ordering::SeqCst),
+        "last_error": last_error,
+        "last_changed_secs": TUNNEL_STATUS_CHANGED_SECS.load(Ordering::SeqCst),
+        "last_connected_secs": TUNNEL_LAST_CONNECTED_SECS.load(Ordering::SeqCst),
+        "retry_after_secs": TUNNEL_RETRY_AFTER_SECS.load(Ordering::SeqCst),
+        "reconnect_failures": TUNNEL_RECONNECT_FAILURES.load(Ordering::SeqCst),
+        "api_base": configured_api_base(),
+    })
+}
+
+fn set_tunnel_status(
+    status: u8,
+    last_error: Option<String>,
+    retry_after: Option<Duration>,
+    reconnect_failures: u32,
+) {
+    TUNNEL_STATUS.store(status, Ordering::SeqCst);
+    TUNNEL_STATUS_CHANGED_SECS.store(now_secs(), Ordering::SeqCst);
+    TUNNEL_RETRY_AFTER_SECS.store(
+        retry_after.map(|duration| duration.as_secs()).unwrap_or(0),
+        Ordering::SeqCst,
+    );
+    TUNNEL_RECONNECT_FAILURES.store(reconnect_failures, Ordering::SeqCst);
+    if status == TUNNEL_STATUS_CONNECTED {
+        TUNNEL_LAST_CONNECTED_SECS.store(now_secs(), Ordering::SeqCst);
+    }
+    if let Ok(mut error) = TUNNEL_LAST_ERROR.lock() {
+        if status == TUNNEL_STATUS_CONNECTED {
+            *error = None;
+        } else if let Some(last_error) = last_error {
+            *error = Some(last_error);
+        }
+    }
+}
+
+fn tunnel_status_name(status: u8) -> &'static str {
+    match status {
+        TUNNEL_STATUS_DISABLED => "disabled",
+        TUNNEL_STATUS_STOPPED => "stopped",
+        TUNNEL_STATUS_CONNECTING => "connecting",
+        TUNNEL_STATUS_CONNECTED => "connected",
+        TUNNEL_STATUS_RECONNECTING => "reconnecting",
+        TUNNEL_STATUS_RATE_LIMITED => "rate_limited",
+        TUNNEL_STATUS_AUTH_REJECTED => "auth_rejected",
+        TUNNEL_STATUS_MACHINE_LIMIT_REACHED => "machine_limit_reached",
+        _ => "unknown",
+    }
+}
+
+fn tunnel_status_label(status: u8) -> &'static str {
+    match status {
+        TUNNEL_STATUS_DISABLED => "Disabled",
+        TUNNEL_STATUS_STOPPED => "Disconnected",
+        TUNNEL_STATUS_CONNECTING => "Connecting",
+        TUNNEL_STATUS_CONNECTED => "Connected",
+        TUNNEL_STATUS_RECONNECTING => "Reconnecting",
+        TUNNEL_STATUS_RATE_LIMITED => "Rate limited",
+        TUNNEL_STATUS_AUTH_REJECTED => "Auth rejected",
+        TUNNEL_STATUS_MACHINE_LIMIT_REACHED => "Machine limit reached",
+        _ => "Unknown",
+    }
+}
+
+fn tunnel_status_message(status: u8) -> &'static str {
+    match status {
+        TUNNEL_STATUS_DISABLED => "No Cyberdesk API key is configured.",
+        TUNNEL_STATUS_STOPPED => {
+            "Cyberdesk tunnel is disconnected; the streaming service can stay running."
+        }
+        TUNNEL_STATUS_CONNECTING => "Opening the Cyberdesk tunnel.",
+        TUNNEL_STATUS_CONNECTED => "Dashboard streaming and remote control are online.",
+        TUNNEL_STATUS_RECONNECTING => "The tunnel dropped and is retrying.",
+        TUNNEL_STATUS_RATE_LIMITED => {
+            "Cyberdesk asked this client to slow down before reconnecting."
+        }
+        TUNNEL_STATUS_AUTH_REJECTED => {
+            "The configured API key was rejected; reconnects are paused."
+        }
+        TUNNEL_STATUS_MACHINE_LIMIT_REACHED => {
+            "This organization rejected the machine registration; reconnects are paused."
+        }
+        _ => "Tunnel state is unknown.",
+    }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 fn signal_tunnel_config_changed() {
@@ -217,6 +484,11 @@ fn jittered_backoff(base: Duration) -> Duration {
     } else {
         base.saturating_sub(Duration::from_millis((-jitter_ms) as u64))
     }
+}
+
+fn should_log_max_backoff_warning(failures: u32) -> bool {
+    failures == MAX_BACKOFF_WARNING_THRESHOLD
+        || (failures > MAX_BACKOFF_WARNING_THRESHOLD && failures % 10 == 0)
 }
 
 fn random_jitter_ms(range_ms: u64) -> u64 {
@@ -267,8 +539,7 @@ fn decode_configured_api_key(value: &str) -> Option<(String, bool)> {
         return None;
     }
 
-    let (api_key, decrypted, should_store) =
-        decrypt_str_or_original(value, API_KEY_ENC_VERSION);
+    let (api_key, decrypted, should_store) = decrypt_str_or_original(value, API_KEY_ENC_VERSION);
     if value.starts_with(API_KEY_ENC_VERSION) && !decrypted {
         log::error!("cyberdesk_tunnel: stored Cyberdesk API key could not be decrypted");
         return None;
@@ -294,6 +565,30 @@ pub(crate) fn store_configured_api_key(api_key: String) -> Result<(), &'static s
 
 pub(crate) fn clear_configured_api_key() {
     config::LocalConfig::set_option("cyberdesk_api_key".to_string(), String::new());
+    set_tunnel_status(
+        TUNNEL_STATUS_DISABLED,
+        Some("Cyberdesk API key was cleared".to_string()),
+        None,
+        0,
+    );
+    signal_tunnel_config_changed();
+}
+
+pub(crate) fn store_tunnel_paused(paused: bool) {
+    config::LocalConfig::set_option(
+        TUNNEL_PAUSED_OPTION.to_string(),
+        if paused { "Y" } else { "" }.to_string(),
+    );
+    if paused {
+        set_tunnel_status(
+            TUNNEL_STATUS_STOPPED,
+            Some("Cyberdesk tunnel is disconnected by local user request".to_string()),
+            None,
+            0,
+        );
+    } else {
+        set_tunnel_status(TUNNEL_STATUS_CONNECTING, None, None, 0);
+    }
     signal_tunnel_config_changed();
 }
 
@@ -333,6 +628,10 @@ pub(crate) fn configured_remote_keepalive_for() -> Option<String> {
                 Some(value.to_string())
             }
         })
+}
+
+fn tunnel_paused() -> bool {
+    config::LocalConfig::get_option(TUNNEL_PAUSED_OPTION) == "Y"
 }
 
 pub(crate) fn store_configured_remote_keepalive_for(machine_id: Option<String>) {
@@ -376,7 +675,10 @@ pub fn generate_new_identity() -> Result<String> {
     reset_fingerprint()?;
     match config::Config::generate_new_identity_id() {
         Some(id) => {
-            log::info!("cyberdesk_tunnel: generated new Cyberdriver identity id {}", id);
+            log::info!(
+                "cyberdesk_tunnel: generated new Cyberdriver identity id {}",
+                id
+            );
             Ok(id)
         }
         None => bail!("failed to generate new Cyberdriver identity id"),
@@ -517,9 +819,7 @@ fn legacy_config_paths() -> Vec<PathBuf> {
     {
         let Some(base) = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
-            })
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
         else {
             return Vec::new();
         };
@@ -568,7 +868,10 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_configured_api_key, API_KEY_ENC_VERSION, API_KEY_MAX_LEN};
+    use super::{
+        decode_configured_api_key, should_log_max_backoff_warning, API_KEY_ENC_VERSION,
+        API_KEY_MAX_LEN,
+    };
     use hbb_common::password_security::encrypt_str_or_original;
 
     #[test]
@@ -590,7 +893,8 @@ mod tests {
 
     #[test]
     fn decode_configured_api_key_reads_encrypted_value() {
-        let encrypted = encrypt_str_or_original("ak_encrypted", API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
+        let encrypted =
+            encrypt_str_or_original("ak_encrypted", API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
         assert_eq!(
             decode_configured_api_key(&encrypted),
             Some(("ak_encrypted".to_string(), false))
@@ -604,5 +908,16 @@ mod tests {
         encrypted.push('x');
 
         assert_eq!(decode_configured_api_key(&encrypted), None);
+    }
+
+    #[test]
+    fn max_backoff_warning_logs_at_threshold_and_periodically() {
+        assert!(!should_log_max_backoff_warning(1));
+        assert!(!should_log_max_backoff_warning(2));
+        assert!(should_log_max_backoff_warning(3));
+        assert!(!should_log_max_backoff_warning(4));
+        assert!(should_log_max_backoff_warning(10));
+        assert!(!should_log_max_backoff_warning(11));
+        assert!(should_log_max_backoff_warning(20));
     }
 }

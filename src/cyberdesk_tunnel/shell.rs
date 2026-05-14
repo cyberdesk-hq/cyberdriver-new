@@ -20,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError},
         Arc, Mutex, MutexGuard, OnceLock,
     },
@@ -31,6 +31,7 @@ use std::{
 const MAX_COMMAND_CHARS: usize = 32 * 1024;
 const MAX_OUTPUT_CHARS: usize = 64 * 1024;
 const MAX_TIMEOUT_SECONDS: f64 = 180.0;
+const MAX_BACKGROUND_COMMANDS: usize = 10;
 const MAX_SESSIONS: usize = 16;
 const TRUNCATED_MARKER: &str = "\n...<truncated>";
 #[cfg(windows)]
@@ -117,6 +118,7 @@ impl Drop for SessionCommandGuard<'_> {
 
 static POWERSHELL_SESSIONS: OnceLock<Mutex<HashMap<String, Arc<PowerShellSession>>>> =
     OnceLock::new();
+static BACKGROUND_COMMANDS: AtomicUsize = AtomicUsize::new(0);
 
 pub fn simple() -> Result<Vec<u8>> {
     let result = run_command("Write-Output 'Hello World'", None, Some(5.0), None)?;
@@ -698,12 +700,41 @@ fn run_command(
             });
         }
         if start.elapsed() >= timeout {
-            let stdout = collect_output_after_timeout(stdout_reader);
-            let stderr = collect_output_after_timeout(stderr_reader);
-            let timeout_message = format!(
-                "Command timeout reached after {:.1} seconds. Process is continuing in the background.",
-                timeout.as_secs_f64()
-            );
+            let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let mut stdout = snapshot_output_after_timeout(&stdout_reader);
+            let mut stderr = snapshot_output_after_timeout(&stderr_reader);
+            let (timeout_message, error) = if try_reserve_background_command() {
+                let pid = child.id();
+                spawn_background_command_reaper(child, stdout_reader, stderr_reader);
+                (
+                    format!(
+                        concat!(
+                            "Command timeout reached after {:.1} seconds. ",
+                            "Process {} is continuing in the background."
+                        ),
+                        timeout.as_secs_f64(),
+                        pid
+                    ),
+                    None,
+                )
+            } else {
+                terminate_process_tree(&mut child);
+                let _ = child.wait();
+                stdout = collect_output_after_timeout(stdout_reader);
+                stderr = collect_output_after_timeout(stderr_reader);
+                (
+                    format!(
+                        concat!(
+                            "Command timeout reached after {:.1} seconds. ",
+                            "Process was terminated because the maximum of {} ",
+                            "background commands is already running."
+                        ),
+                        timeout.as_secs_f64(),
+                        MAX_BACKGROUND_COMMANDS
+                    ),
+                    Some("too many background PowerShell commands are already running".to_string()),
+                )
+            };
             let stderr = if stderr.is_empty() {
                 timeout_message
             } else {
@@ -713,10 +744,10 @@ fn run_command(
                 stdout,
                 stderr,
                 exit_code: 124,
-                session_id: session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                session_id,
                 session_created: false,
                 timeout_reached: Some(true),
-                error: None,
+                error,
             });
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -786,6 +817,56 @@ fn collect_output_after_timeout(reader: OutputReader) -> String {
             "failed to collect PowerShell output: reader thread panicked".to_string()
         }
     }
+}
+
+fn snapshot_output_after_timeout(reader: &OutputReader) -> String {
+    capped_output_to_string(snapshot_output(&reader.output, true))
+}
+
+fn try_reserve_background_command() -> bool {
+    let mut current = BACKGROUND_COMMANDS.load(Ordering::Acquire);
+    loop {
+        if current >= MAX_BACKGROUND_COMMANDS {
+            return false;
+        }
+        match BACKGROUND_COMMANDS.compare_exchange(
+            current,
+            current + 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return true,
+            Err(next) => current = next,
+        }
+    }
+}
+
+fn spawn_background_command_reaper(
+    mut child: Child,
+    stdout_reader: OutputReader,
+    stderr_reader: OutputReader,
+) {
+    thread::spawn(move || {
+        let max_lifetime = Duration::from_secs(3600);
+        let start = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {
+                    if start.elapsed() >= max_lifetime {
+                        terminate_process_tree(&mut child);
+                        let _ = child.wait();
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(500));
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = collect_output_after_timeout(stdout_reader);
+        let _ = collect_output_after_timeout(stderr_reader);
+        BACKGROUND_COMMANDS.fetch_sub(1, Ordering::AcqRel);
+    });
 }
 
 fn snapshot_output(output: &Arc<Mutex<CappedOutput>>, mark_truncated: bool) -> CappedOutput {

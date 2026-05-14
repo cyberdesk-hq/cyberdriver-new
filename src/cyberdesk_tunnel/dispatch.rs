@@ -90,18 +90,24 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(err.status(), format!("copy to clipboard failed: {err:#}")),
         },
-        ("GET", "/computer/fs/list" | "computer/fs/list") => match fs::list(meta) {
-            Ok(body) => (200, body, "application/json"),
-            Err(err) => json_error(400, format!("fs list failed: {err:#}")),
-        },
-        ("GET", "/computer/fs/read" | "computer/fs/read") => match fs::read(meta) {
-            Ok(body) => (200, body, "application/json"),
-            Err(err) => json_error(400, format!("fs read failed: {err:#}")),
-        },
-        ("POST", "/computer/fs/write" | "computer/fs/write") => match fs::write(body) {
-            Ok(body) => (200, body, "application/json"),
-            Err(err) => json_error(400, format!("fs write failed: {err:#}")),
-        },
+        ("GET", "/computer/fs/list" | "computer/fs/list") => {
+            dispatch_user_context_first(meta, body).unwrap_or_else(|| match fs::list(meta) {
+                Ok(body) => (200, body, "application/json"),
+                Err(err) => json_error(400, format!("fs list failed: {err:#}")),
+            })
+        }
+        ("GET", "/computer/fs/read" | "computer/fs/read") => {
+            dispatch_user_context_first(meta, body).unwrap_or_else(|| match fs::read(meta) {
+                Ok(body) => (200, body, "application/json"),
+                Err(err) => json_error(400, format!("fs read failed: {err:#}")),
+            })
+        }
+        ("POST", "/computer/fs/write" | "computer/fs/write") => {
+            dispatch_user_context_first(meta, body).unwrap_or_else(|| match fs::write(body) {
+                Ok(body) => (200, body, "application/json"),
+                Err(err) => json_error(400, format!("fs write failed: {err:#}")),
+            })
+        }
         ("POST", "/computer/shell/powershell/simple") => match shell::simple() {
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(500, format!("powershell simple failed: {err:#}")),
@@ -110,10 +116,11 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(500, format!("powershell test failed: {err:#}")),
         },
-        ("POST", "/computer/shell/powershell/exec") => match shell::exec(body) {
-            Ok(body) => (200, body, "application/json"),
-            Err(err) => json_error(400, format!("powershell exec failed: {err:#}")),
-        },
+        ("POST", "/computer/shell/powershell/exec") => dispatch_user_context_first(meta, body)
+            .unwrap_or_else(|| match shell::exec(body) {
+                Ok(body) => (200, body, "application/json"),
+                Err(err) => json_error(400, format!("powershell exec failed: {err:#}")),
+            }),
         ("POST", "/computer/shell/powershell/session") => match shell::session(body) {
             Ok(body) => (200, body, "application/json"),
             Err(err) => json_error(400, format!("powershell session failed: {err:#}")),
@@ -150,6 +157,21 @@ pub(super) fn dispatch(request: ReverseTunnelRequest<'_>) -> (u16, Vec<u8>, &'st
             br#"{"error":"not implemented in cyberdesk_tunnel yet"}"#.to_vec(),
             "application/json",
         ),
+    }
+}
+
+fn dispatch_user_context_first(
+    meta: &RequestMeta,
+    body: &[u8],
+) -> Option<(u16, Vec<u8>, &'static str)> {
+    #[cfg(windows)]
+    {
+        super::user_context::dispatch(meta, body)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (meta, body);
+        None
     }
 }
 

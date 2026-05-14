@@ -30,7 +30,8 @@ class CyberdeskBranding {
   static const String devHbbsPubkey =
       'EHHHwBfzjJasItIOwAJAI60Jj64uJu4rpI1cdE4ulhI=';
   static const String apiServerDefault = prodApiServer;
-  static const String updateFeedUrl = 'https://updates.cyberdesk.io/manifest.json';
+  static const String updateFeedUrl =
+      'https://updates.cyberdesk.io/manifest.json';
 
   // Display strings shown in UI. Kept here so non-engineering
   // contributors can edit copy without touching Dart logic.
@@ -45,6 +46,8 @@ class CyberdeskBranding {
       'The easiest way to automate computers with AI.';
   static const String enableServiceLabel = 'Enable Cyberdesk service';
   static const String disableServiceLabel = 'Disable Cyberdesk service';
+  static const String streamingServiceStatusLabel =
+      'Cyberdriver Streaming Service';
   static const String tunnelStatusLabel = 'Cyberdesk tunnel';
   static const String apiKeyFieldLabel = 'Cyberdesk API key';
   static const String apiKeyHelpText =
