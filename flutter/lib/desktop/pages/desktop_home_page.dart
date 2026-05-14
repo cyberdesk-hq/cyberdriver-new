@@ -639,17 +639,17 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 final onPressed = _cyberdeskApiKeySaving
                     ? null
                     : tunnelConnected
-                        ? _disconnectCyberdeskTunnel
+                        ? _stopCyberdeskService
                         : editingApiKey
                             ? () => _saveCyberdeskApiKey(connectAfterSave: true)
-                            : _connectCyberdeskTunnel;
+                            : _startCyberdeskService;
                 final child = _cyberdeskApiKeySaving
                     ? const SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : Text(tunnelConnected ? 'Disconnect' : 'Connect');
+                    : Text(tunnelConnected ? 'Stop Service' : 'Start Service');
                 if (editingApiKey) {
                   return ElevatedButton(
                     onPressed: onPressed,
@@ -730,12 +730,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     }
   }
 
-  Future<void> _connectCyberdeskTunnel() async {
+  Future<void> _startCyberdeskService() async {
     await start_service(true);
     await _refreshCyberdeskRuntimeStatus();
   }
 
-  Future<void> _disconnectCyberdeskTunnel() async {
+  Future<void> _stopCyberdeskService() async {
     await start_service(false);
     await _refreshCyberdeskRuntimeStatus();
   }
