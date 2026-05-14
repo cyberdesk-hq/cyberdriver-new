@@ -37,6 +37,8 @@ mod fs;
 mod input;
 mod internal;
 mod shell;
+#[cfg(windows)]
+pub(crate) mod user_context;
 
 const API_KEY_ENC_VERSION: &str = "00";
 const API_KEY_MAX_LEN: usize = 4096;

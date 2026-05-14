@@ -1050,6 +1050,43 @@ pub fn run_exe_in_session(
     Ok(None)
 }
 
+pub fn launch_user_process_in_session(
+    session_id: DWORD,
+    cmd: &str,
+    show: bool,
+) -> ResultType<HANDLE> {
+    use std::os::windows::ffi::OsStrExt;
+    let wstr: Vec<u16> = std::ffi::OsStr::new(cmd)
+        .encode_wide()
+        .chain(Some(0).into_iter())
+        .collect();
+    let mut token_pid = 0;
+    let h = unsafe {
+        LaunchProcessWin(
+            wstr.as_ptr(),
+            session_id,
+            TRUE,
+            if show { TRUE } else { FALSE },
+            &mut token_pid,
+        )
+    };
+    if h.is_null() {
+        if token_pid == 0 {
+            bail!(
+                "Failed to launch user-context process in session {}: no process {}",
+                session_id,
+                EXPLORER_EXE
+            );
+        }
+        bail!(
+            "Failed to launch user-context process in session {}: {}",
+            session_id,
+            io::Error::last_os_error()
+        );
+    }
+    Ok(h)
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn send_close(postfix: &str) -> ResultType<()> {
     send_close_async(postfix).await
