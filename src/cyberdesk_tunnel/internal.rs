@@ -48,6 +48,7 @@ struct Diagnostics {
     shutdown_requested: bool,
     keepalive_enabled: bool,
     last_remote_activity_secs: u64,
+    tunnel_status: Value,
 }
 
 pub fn diagnostics() -> Result<Vec<u8>> {
@@ -81,6 +82,7 @@ pub fn diagnostics() -> Result<Vec<u8>> {
         shutdown_requested: SHUTDOWN_REQUESTED.load(Ordering::SeqCst),
         keepalive_enabled: keepalive_enabled(),
         last_remote_activity_secs: LAST_REMOTE_ACTIVITY_SECS.load(Ordering::SeqCst),
+        tunnel_status: crate::cyberdesk_tunnel::runtime_status(),
     })?)
 }
 

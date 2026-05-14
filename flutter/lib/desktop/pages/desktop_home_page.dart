@@ -56,6 +56,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   bool _cyberdeskApiKeyObscured = true;
   bool _cyberdeskApiKeyEditing = false;
   bool _cyberdeskApiKeySaving = false;
+  final RxString _cyberdeskTunnelState = 'unknown'.obs;
+  final RxString _cyberdeskTunnelLabel = 'Unknown'.obs;
+  final RxString _cyberdeskTunnelMessage =
+      'Tunnel state has not been checked yet.'.obs;
+  final RxString _cyberdeskTunnelLastError = ''.obs;
 
   final RxBool _editHover = false.obs;
   final RxBool _block = false.obs;
@@ -422,27 +427,89 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final cyberdeskApiKeyConfigured =
         bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
     final editingApiKey = _cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured;
-    bool tunnelReady() =>
-        !svcStopped.value && stateGlobal.svcStatus.value == SvcStatus.ready;
-    String tunnelStatus() {
-      final ready = tunnelReady();
-      return !cyberdeskApiKeyConfigured
-          ? CyberdeskBranding.tunnelDisabled
-          : ready
-              ? CyberdeskBranding.tunnelConnected
-              : CyberdeskBranding.tunnelDisconnected;
+
+    String serviceStatusLabel() {
+      if (svcStopped.value) {
+        return 'Stopped';
+      }
+      switch (stateGlobal.svcStatus.value) {
+        case SvcStatus.ready:
+          return 'Ready';
+        case SvcStatus.connecting:
+          return 'Connecting';
+        case SvcStatus.notReady:
+          return 'Not ready';
+      }
     }
 
-    Widget tunnelIcon() {
-      final ready = tunnelReady();
-      return Icon(
-        ready && cyberdeskApiKeyConfigured
-            ? Icons.cloud_done_outlined
-            : Icons.cloud_off_outlined,
-        color: ready && cyberdeskApiKeyConfigured
-            ? MyTheme.accent
-            : Theme.of(context).disabledColor,
-        size: 20,
+    Color serviceStatusColor() {
+      if (svcStopped.value ||
+          stateGlobal.svcStatus.value == SvcStatus.notReady) {
+        return Theme.of(context).disabledColor;
+      }
+      if (stateGlobal.svcStatus.value == SvcStatus.connecting) {
+        return kColorWarn;
+      }
+      return MyTheme.accent;
+    }
+
+    Color tunnelStatusColor(String state) {
+      switch (state) {
+        case 'connected':
+          return MyTheme.accent;
+        case 'connecting':
+        case 'reconnecting':
+        case 'rate_limited':
+          return kColorWarn;
+        case 'disabled':
+        case 'stopped':
+        case 'auth_rejected':
+        case 'machine_limit_reached':
+          return Theme.of(context).colorScheme.error;
+        default:
+          return Theme.of(context).disabledColor;
+      }
+    }
+
+    Widget statusRow({
+      required IconData icon,
+      required String label,
+      required String value,
+      required Color color,
+    }) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 16, color: color).marginOnly(top: 1),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.color
+                              ?.withOpacity(0.65),
+                        ),
+                  ),
+                  Text(
+                    value,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: color,
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       );
     }
 
@@ -459,20 +526,58 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         children: [
           Row(
             children: [
-              Obx(() => tunnelIcon()),
+              Obx(() => Icon(
+                    _cyberdeskTunnelState.value == 'connected'
+                        ? Icons.cloud_done_outlined
+                        : Icons.cloud_off_outlined,
+                    color: tunnelStatusColor(_cyberdeskTunnelState.value),
+                    size: 20,
+                  )),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  CyberdeskBranding.tunnelStatusLabel,
+                  'Cyberdesk connectivity',
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
             ],
           ),
-          Obx(() => Text(
-                tunnelStatus(),
-                style: Theme.of(context).textTheme.bodySmall,
-              )).marginOnly(top: 4, bottom: 10),
+          Obx(() => statusRow(
+                icon: Icons.desktop_windows_outlined,
+                label: CyberdeskBranding.streamingServiceStatusLabel,
+                value: serviceStatusLabel(),
+                color: serviceStatusColor(),
+              )),
+          Obx(() => statusRow(
+                icon: Icons.cloud_queue_outlined,
+                label: CyberdeskBranding.tunnelStatusLabel,
+                value: _cyberdeskTunnelLabel.value,
+                color: tunnelStatusColor(_cyberdeskTunnelState.value),
+              )),
+          Obx(() {
+            final message = _cyberdeskTunnelMessage.value;
+            final lastError = _cyberdeskTunnelLastError.value;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (message.isNotEmpty)
+                  Text(
+                    message,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ).marginOnly(top: 8),
+                if (lastError.isNotEmpty &&
+                    _cyberdeskTunnelState.value != 'connected')
+                  Text(
+                    'Last tunnel error: $lastError',
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                  ).marginOnly(top: 4),
+              ],
+            );
+          }).marginOnly(bottom: 10),
           if (editingApiKey)
             TextField(
               controller: _cyberdeskApiKeyController,
@@ -528,25 +633,34 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           const SizedBox(height: 10),
           Row(
             children: [
-              if (editingApiKey)
-                ElevatedButton(
-                  onPressed: _cyberdeskApiKeySaving
-                      ? null
-                      : () => _saveCyberdeskApiKey(connectAfterSave: true),
-                  child: _cyberdeskApiKeySaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Save'),
-                )
-              else
-                OutlinedButton(
-                  onPressed:
-                      _cyberdeskApiKeySaving ? null : () => start_service(true),
-                  child: const Text('Connect'),
-                ),
+              Obx(() {
+                final tunnelConnected =
+                    _cyberdeskTunnelState.value == 'connected';
+                final onPressed = _cyberdeskApiKeySaving
+                    ? null
+                    : tunnelConnected
+                        ? _disconnectCyberdeskTunnel
+                        : editingApiKey
+                            ? () => _saveCyberdeskApiKey(connectAfterSave: true)
+                            : _connectCyberdeskTunnel;
+                final child = _cyberdeskApiKeySaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(tunnelConnected ? 'Disconnect' : 'Connect');
+                if (editingApiKey) {
+                  return ElevatedButton(
+                    onPressed: onPressed,
+                    child: child,
+                  );
+                }
+                return OutlinedButton(
+                  onPressed: onPressed,
+                  child: child,
+                );
+              }),
               if (editingApiKey && cyberdeskApiKeyConfigured) ...[
                 const SizedBox(width: 8),
                 TextButton(
@@ -605,6 +719,37 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       if (mounted) {
         setState(() {
           _cyberdeskApiKeyEditing = false;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _cyberdeskApiKeySaving = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _connectCyberdeskTunnel() async {
+    await start_service(true);
+    await _refreshCyberdeskRuntimeStatus();
+  }
+
+  Future<void> _disconnectCyberdeskTunnel() async {
+    setState(() {
+      _cyberdeskApiKeySaving = true;
+    });
+    try {
+      final cleared = await mainSetLocalOption('cyberdesk_api_key', '');
+      if (!cleared) {
+        showToast(translate('Failed'));
+        return;
+      }
+      _cyberdeskApiKeyController.clear();
+      await _refreshCyberdeskRuntimeStatus();
+      if (mounted) {
+        setState(() {
+          _cyberdeskApiKeyEditing = true;
         });
       }
     } finally {
@@ -911,6 +1056,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         svcStopped.value = v;
         setState(() {});
       }
+      await _refreshCyberdeskRuntimeStatus();
       if (watchIsCanScreenRecording) {
         if (bind.mainIsCanScreenRecording(prompt: false)) {
           watchIsCanScreenRecording = false;
@@ -1061,6 +1207,40 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       });
     }
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  Future<void> _refreshCyberdeskRuntimeStatus() async {
+    try {
+      final status =
+          jsonDecode(await bind.mainGetConnectStatus()) as Map<String, dynamic>;
+      final statusNum = status['status_num'] as int? ?? -1;
+      if (statusNum == 0) {
+        stateGlobal.svcStatus.value = SvcStatus.connecting;
+      } else if (statusNum == 1) {
+        stateGlobal.svcStatus.value = SvcStatus.ready;
+      } else {
+        stateGlobal.svcStatus.value = SvcStatus.notReady;
+      }
+      final tunnel = status['cyberdesk_tunnel'];
+      if (tunnel is Map<String, dynamic>) {
+        _cyberdeskTunnelState.value = tunnel['state']?.toString() ?? 'unknown';
+        _cyberdeskTunnelLabel.value = tunnel['label']?.toString() ?? 'Unknown';
+        _cyberdeskTunnelMessage.value = tunnel['message']?.toString() ?? '';
+        _cyberdeskTunnelLastError.value =
+            tunnel['last_error']?.toString() ?? '';
+      } else {
+        _cyberdeskTunnelState.value = 'unknown';
+        _cyberdeskTunnelLabel.value = 'Unknown';
+        _cyberdeskTunnelMessage.value =
+            'This build does not expose live Cyberdesk tunnel state.';
+        _cyberdeskTunnelLastError.value = '';
+      }
+    } catch (e) {
+      _cyberdeskTunnelState.value = 'unknown';
+      _cyberdeskTunnelLabel.value = 'Unknown';
+      _cyberdeskTunnelMessage.value = 'Failed to read Cyberdriver status.';
+      _cyberdeskTunnelLastError.value = e.toString();
+    }
   }
 
   _updateWindowSize() {

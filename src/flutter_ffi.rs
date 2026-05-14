@@ -1087,7 +1087,16 @@ pub fn main_get_lan_peers() -> String {
 pub fn main_get_connect_status() -> String {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        serde_json::to_string(&get_connect_status()).unwrap_or("".to_string())
+        let mut value =
+            serde_json::to_value(get_connect_status()).unwrap_or_else(|_| serde_json::json!({}));
+        #[cfg(feature = "cyberdesk")]
+        if let Some(map) = value.as_object_mut() {
+            map.insert(
+                "cyberdesk_tunnel".to_string(),
+                crate::cyberdesk_tunnel::runtime_status(),
+            );
+        }
+        serde_json::to_string(&value).unwrap_or("".to_string())
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
@@ -1226,9 +1235,7 @@ fn sync_cyberdesk_local_option_to_service(key: &str, value: String) {
     {
         if crate::platform::is_installed() {
             if let Err(err) = crate::ipc::set_local_config(key, value) {
-                log::warn!(
-                    "failed to sync Cyberdesk local option {key} to server process: {err}"
-                );
+                log::warn!("failed to sync Cyberdesk local option {key} to server process: {err}");
             }
         }
     }

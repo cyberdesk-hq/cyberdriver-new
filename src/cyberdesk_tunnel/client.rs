@@ -267,6 +267,7 @@ pub async fn run(
         "cyberdesk_tunnel: connected (HTTP {})",
         response.status().as_u16()
     );
+    super::mark_tunnel_connected();
 
     let (mut write, mut read) = ws.split();
     let connected_at = Instant::now();
