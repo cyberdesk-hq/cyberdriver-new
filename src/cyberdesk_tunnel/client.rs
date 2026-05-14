@@ -35,7 +35,7 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio_tungstenite::{
     connect_async,
@@ -54,6 +54,9 @@ const MAX_REQUEST_BODY_BYTES: usize = 150 * 1024 * 1024;
 const MAX_IN_FLIGHT_DISPATCHES: usize = 4;
 const MAX_IDEMPOTENCY_ENTRIES: usize = 128;
 const MAX_IDEMPOTENCY_BODY_BYTES: usize = 2 * 1024 * 1024;
+const PING_INTERVAL: Duration = Duration::from_secs(20);
+const PONG_TIMEOUT: Duration = Duration::from_secs(20);
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(300);
 
 #[derive(Debug)]
 pub(super) struct RateLimited {
@@ -130,6 +133,50 @@ impl fmt::Display for MachineLimitReached {
 
 impl std::error::Error for MachineLimitReached {}
 
+#[derive(Debug, PartialEq, Eq)]
+enum CloseFrameDecision {
+    Reconnect,
+    AuthRejected,
+    RateLimited(Duration),
+    MachineLimitReached(String),
+}
+
+#[derive(Debug)]
+pub(super) struct ConnectedTunnelError {
+    connected_for: Duration,
+    source: Error,
+}
+
+impl ConnectedTunnelError {
+    fn new(connected_for: Duration, source: Error) -> Self {
+        Self {
+            connected_for,
+            source,
+        }
+    }
+
+    pub(super) fn connected_for(&self) -> Duration {
+        self.connected_for
+    }
+}
+
+impl fmt::Display for ConnectedTunnelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "cyberdesk_tunnel: connected tunnel failed after {:.1}s: {}",
+            self.connected_for.as_secs_f64(),
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for ConnectedTunnelError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
 pub(super) fn is_non_retryable_auth_error(error: &Error) -> bool {
     if error.downcast_ref::<AuthRejected>().is_some() {
         return true;
@@ -144,6 +191,12 @@ pub(super) fn is_non_retryable_auth_error(error: &Error) -> bool {
             if response.status() == StatusCode::UNAUTHORIZED
                 || response.status() == StatusCode::FORBIDDEN
     )
+}
+
+pub(super) fn connected_for_error(error: &Error) -> Option<Duration> {
+    error
+        .downcast_ref::<ConnectedTunnelError>()
+        .map(|error| error.connected_for())
 }
 
 pub(super) fn dispatch_semaphore() -> Arc<Semaphore> {
@@ -216,6 +269,11 @@ pub async fn run(
     );
 
     let (mut write, mut read) = ws.split();
+    let connected_at = Instant::now();
+    let mut ping_interval = tokio::time::interval(PING_INTERVAL);
+    ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ping_interval.tick().await;
+    let mut ping_state = PingState::default();
 
     // Per-request inbound state. Cloud sends:
     //   text(meta JSON)  ->  [binary chunks]  ->  text("end")
@@ -228,15 +286,39 @@ pub async fn run(
     loop {
         let msg = tokio::select! {
             maybe_msg = read.next() => match maybe_msg {
-                Some(msg) => msg.context("WebSocket read error")?,
+                Some(msg) => msg.map_err(|err| connected_error(connected_at, anyhow!("WebSocket read error: {err}")))?,
                 None => break,
             },
             maybe_response = response_rx.recv() => {
                 let Some(response) = maybe_response else {
                     break;
                 };
-                if let Some((key, response)) = send_response(&mut write, response).await? {
+                if let Some((key, response)) = send_response(&mut write, response)
+                    .await
+                    .map_err(|err| connected_error(connected_at, err))?
+                {
                     idempotency_cache.insert(key, &response);
+                }
+                continue;
+            },
+            _ = ping_interval.tick() => {
+                let now = Instant::now();
+                if ping_state.timed_out(now, PONG_TIMEOUT) {
+                    return Err(connected_error(
+                        connected_at,
+                        anyhow!(
+                            "WebSocket pong timed out after {}s",
+                            PONG_TIMEOUT.as_secs()
+                        ),
+                    ));
+                }
+                if !ping_state.awaiting_pong() {
+                    write
+                        .send(Message::Ping(Vec::new().into()))
+                        .await
+                        .map_err(|err| connected_error(connected_at, anyhow!("sending WebSocket ping failed: {err}")))?;
+                    ping_state.mark_sent(now);
+                    log::debug!("cyberdesk_tunnel: WebSocket ping sent");
                 }
                 continue;
             }
@@ -299,7 +381,8 @@ pub async fn run(
                             response,
                         },
                     )
-                    .await?;
+                    .await
+                    .map_err(|err| connected_error(connected_at, err))?;
                 } else {
                     if pending_meta.is_some() {
                         log::warn!(
@@ -363,16 +446,17 @@ pub async fn run(
                     if let Err(err) = write.send(Message::Close(frame.clone())).await {
                         log::warn!("cyberdesk_tunnel: failed to send WebSocket close frame: {err}");
                     }
-                    if code == 4001 {
-                        return Err(AuthRejected::new(code).into());
-                    }
-                    if code == 4009 {
-                        return Err(MachineLimitReached::new(f.reason.to_string()).into());
-                    }
-                    if code == 4008 {
-                        let retry_after = retry_after_from_reason(f.reason.as_ref())
-                            .unwrap_or_else(|| Duration::from_secs(16));
-                        return Err(RateLimited::new(retry_after).into());
+                    match classify_close_frame(code, f.reason.as_ref()) {
+                        CloseFrameDecision::Reconnect => {}
+                        CloseFrameDecision::AuthRejected => {
+                            return Err(AuthRejected::new(code).into());
+                        }
+                        CloseFrameDecision::MachineLimitReached(reason) => {
+                            return Err(MachineLimitReached::new(reason).into());
+                        }
+                        CloseFrameDecision::RateLimited(retry_after) => {
+                            return Err(RateLimited::new(retry_after).into());
+                        }
                     }
                 } else {
                     log::info!("cyberdesk_tunnel: server closed connection (no close frame)");
@@ -388,12 +472,31 @@ pub async fn run(
                 let _ = write.send(Message::Pong(payload)).await;
             }
 
-            Message::Pong(_) | Message::Frame(_) => {}
+            Message::Pong(_) => {
+                ping_state.mark_pong_received();
+                log::debug!("cyberdesk_tunnel: WebSocket pong received");
+            }
+            Message::Frame(_) => {}
         }
     }
 
     log::info!("cyberdesk_tunnel: read loop ended");
     Ok(())
+}
+
+fn classify_close_frame(code: u16, reason: &str) -> CloseFrameDecision {
+    match code {
+        4001 => CloseFrameDecision::AuthRejected,
+        4008 => CloseFrameDecision::RateLimited(
+            retry_after_from_reason(reason).unwrap_or_else(|| Duration::from_secs(60)),
+        ),
+        4009 => CloseFrameDecision::MachineLimitReached(reason.to_string()),
+        _ => CloseFrameDecision::Reconnect,
+    }
+}
+
+fn connected_error(connected_at: Instant, source: Error) -> Error {
+    ConnectedTunnelError::new(connected_at.elapsed(), source).into()
 }
 
 type ResponseTuple = (u16, Vec<u8>, &'static str);
@@ -573,18 +676,68 @@ fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {
 }
 
 fn retry_after_from_reason(reason: &str) -> Option<Duration> {
-    for token in reason.split(|ch: char| ch == ';' || ch == ',' || ch.is_whitespace()) {
-        let Some(value) = token
+    let mut previous_token_was_wait = false;
+    let mut previous_token_was_retry_after = false;
+    for token in reason.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '=')) {
+        if token.is_empty() {
+            continue;
+        }
+        if let Some(value) = token
             .strip_prefix("retry-after=")
             .or_else(|| token.strip_prefix("Retry-After="))
-        else {
+        {
+            if let Ok(seconds) = value.parse::<u64>() {
+                return Some(bounded_retry_after(seconds));
+            }
             continue;
-        };
-        if let Ok(seconds) = value.parse::<u64>() {
-            return Some(Duration::from_secs(seconds.clamp(1, 60)));
+        }
+        if token.eq_ignore_ascii_case("retry-after") {
+            previous_token_was_retry_after = true;
+            continue;
+        }
+        if token.eq_ignore_ascii_case("wait") {
+            previous_token_was_wait = true;
+            continue;
+        }
+        if previous_token_was_wait || previous_token_was_retry_after {
+            previous_token_was_wait = false;
+            previous_token_was_retry_after = false;
+            if let Ok(seconds) = token.parse::<u64>() {
+                return Some(bounded_retry_after(seconds));
+            }
+            continue;
         }
     }
     None
+}
+
+fn bounded_retry_after(seconds: u64) -> Duration {
+    Duration::from_secs(seconds.clamp(1, MAX_RETRY_AFTER.as_secs()))
+}
+
+#[derive(Debug, Default)]
+struct PingState {
+    sent_at: Option<Instant>,
+}
+
+impl PingState {
+    fn awaiting_pong(&self) -> bool {
+        self.sent_at.is_some()
+    }
+
+    fn mark_sent(&mut self, now: Instant) {
+        self.sent_at = Some(now);
+    }
+
+    fn mark_pong_received(&mut self) {
+        self.sent_at = None;
+    }
+
+    fn timed_out(&self, now: Instant, timeout: Duration) -> bool {
+        self.sent_at
+            .map(|sent_at| now.duration_since(sent_at) >= timeout)
+            .unwrap_or(false)
+    }
 }
 
 /// Best-effort local hostname for the X-Piglet-Hostname header. Used
@@ -638,7 +791,17 @@ fn is_filesystem_route(route: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::log_path;
+    use super::{
+        classify_close_frame, connected_for_error, is_non_retryable_auth_error, log_path,
+        retry_after_from_reason, AuthRejected, CloseFrameDecision, ConnectedTunnelError,
+        MachineLimitReached, PingState, MAX_RETRY_AFTER,
+    };
+    use hbb_common::anyhow::anyhow;
+    use std::time::{Duration, Instant};
+    use tokio_tungstenite::tungstenite::{
+        http::{Response, StatusCode},
+        Error as WsError,
+    };
 
     #[test]
     fn log_path_redacts_filesystem_query() {
@@ -662,5 +825,122 @@ mod tests {
             log_path("/computer/display/screenshot?format=png"),
             "/computer/display/screenshot?format=png"
         );
+    }
+
+    #[test]
+    fn retry_after_parses_retry_after_token() {
+        assert_eq!(
+            retry_after_from_reason("rate limited; retry-after=42"),
+            Some(Duration::from_secs(42))
+        );
+        assert_eq!(
+            retry_after_from_reason("rate limited; Retry-After: 43"),
+            Some(Duration::from_secs(43))
+        );
+    }
+
+    #[test]
+    fn retry_after_parses_server_wait_reason() {
+        assert_eq!(
+            retry_after_from_reason(
+                "Rate limited: Too many reconnection attempts. Wait 60 seconds."
+            ),
+            Some(Duration::from_secs(60))
+        );
+    }
+
+    #[test]
+    fn retry_after_bounds_extreme_values() {
+        assert_eq!(
+            retry_after_from_reason("retry-after=0"),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            retry_after_from_reason("retry-after=999999"),
+            Some(MAX_RETRY_AFTER)
+        );
+    }
+
+    #[test]
+    fn ping_state_times_out_until_pong_received() {
+        let start = Instant::now();
+        let mut state = PingState::default();
+        assert!(!state.awaiting_pong());
+        assert!(!state.timed_out(start + Duration::from_secs(30), Duration::from_secs(20)));
+
+        state.mark_sent(start);
+        assert!(state.awaiting_pong());
+        assert!(!state.timed_out(start + Duration::from_secs(19), Duration::from_secs(20)));
+        assert!(state.timed_out(start + Duration::from_secs(20), Duration::from_secs(20)));
+
+        state.mark_pong_received();
+        assert!(!state.awaiting_pong());
+        assert!(!state.timed_out(start + Duration::from_secs(60), Duration::from_secs(20)));
+    }
+
+    #[test]
+    fn close_frame_1001_reconnects_after_service_restart() {
+        assert_eq!(
+            classify_close_frame(1001, "Server restarting"),
+            CloseFrameDecision::Reconnect
+        );
+    }
+
+    #[test]
+    fn close_frame_4008_uses_server_wait_duration() {
+        assert_eq!(
+            classify_close_frame(
+                4008,
+                "Rate limited: Too many reconnection attempts. Wait 60 seconds."
+            ),
+            CloseFrameDecision::RateLimited(Duration::from_secs(60))
+        );
+    }
+
+    #[test]
+    fn close_frame_4001_and_4009_are_non_retryable() {
+        assert_eq!(
+            classify_close_frame(4001, "Invalid or expired API key"),
+            CloseFrameDecision::AuthRejected
+        );
+        assert_eq!(
+            classify_close_frame(4009, "machine limit reached"),
+            CloseFrameDecision::MachineLimitReached("machine limit reached".to_string())
+        );
+    }
+
+    #[test]
+    fn auth_and_machine_limit_errors_are_non_retryable() {
+        let auth_error = anyhow!(AuthRejected::new(4001));
+        let limit_error = anyhow!(MachineLimitReached::new("machine limit reached"));
+        assert!(is_non_retryable_auth_error(&auth_error));
+        assert!(is_non_retryable_auth_error(&limit_error));
+    }
+
+    #[test]
+    fn http_401_and_403_handshake_failures_are_non_retryable() {
+        let unauthorized = anyhow!(WsError::Http(
+            Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(None::<Vec<u8>>)
+                .expect("test response should build")
+        ));
+        let forbidden = anyhow!(WsError::Http(
+            Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(None::<Vec<u8>>)
+                .expect("test response should build")
+        ));
+        assert!(is_non_retryable_auth_error(&unauthorized));
+        assert!(is_non_retryable_auth_error(&forbidden));
+    }
+
+    #[test]
+    fn connected_transport_errors_preserve_stable_duration() {
+        let error = anyhow!(ConnectedTunnelError::new(
+            Duration::from_secs(12),
+            anyhow!("transport reset")
+        ));
+        assert_eq!(connected_for_error(&error), Some(Duration::from_secs(12)));
     }
 }
