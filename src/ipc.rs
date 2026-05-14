@@ -742,15 +742,18 @@ async fn handle(data: Data, stream: &mut Connection) {
                     } else if let Err(message) =
                         crate::cyberdesk_tunnel::store_configured_api_key(value)
                     {
-                        log::error!(
-                            "failed to store service-profile Cyberdesk API key: {message}"
-                        );
+                        log::error!("failed to store service-profile Cyberdesk API key: {message}");
                     } else {
                         crate::cyberdesk_tunnel::spawn_if_enabled();
                     }
                 } else if name == "cyberdesk_api_base" {
                     crate::cyberdesk_tunnel::store_configured_api_base(value);
                     crate::cyberdesk_tunnel::spawn_if_enabled();
+                } else if name == crate::cyberdesk_tunnel::TUNNEL_PAUSED_OPTION {
+                    crate::cyberdesk_tunnel::store_tunnel_paused(value == "Y");
+                    if value != "Y" {
+                        crate::cyberdesk_tunnel::spawn_if_enabled();
+                    }
                 } else {
                     set_local_option(name, value);
                 }
@@ -1195,7 +1198,8 @@ pub async fn set_config_async(name: &str, value: String) -> ResultType<()> {
 
 pub async fn set_local_config_async(name: &str, value: String) -> ResultType<()> {
     let mut c = connect(1000, "").await?;
-    c.send(&Data::LocalConfig((name.to_owned(), Some(value)))).await?;
+    c.send(&Data::LocalConfig((name.to_owned(), Some(value))))
+        .await?;
     Ok(())
 }
 

@@ -639,17 +639,21 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 final onPressed = _cyberdeskApiKeySaving
                     ? null
                     : tunnelConnected
-                        ? _stopCyberdeskService
+                        ? _disconnectCyberdeskTunnel
                         : editingApiKey
                             ? () => _saveCyberdeskApiKey(connectAfterSave: true)
-                            : _startCyberdeskService;
+                            : _connectCyberdeskTunnel;
                 final child = _cyberdeskApiKeySaving
                     ? const SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : Text(tunnelConnected ? 'Stop Service' : 'Start Service');
+                    : Text(tunnelConnected
+                        ? 'Disconnect'
+                        : editingApiKey
+                            ? 'Save'
+                            : 'Connect');
                 if (editingApiKey) {
                   return ElevatedButton(
                     onPressed: onPressed,
@@ -714,7 +718,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       }
       _cyberdeskApiKeyController.clear();
       if (connectAfterSave) {
-        await start_service(true);
+        await _connectCyberdeskTunnel();
       }
       if (mounted) {
         setState(() {
@@ -730,13 +734,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     }
   }
 
-  Future<void> _startCyberdeskService() async {
+  Future<void> _connectCyberdeskTunnel() async {
+    await bind.mainSetLocalOption(
+        key: 'cyberdesk_tunnel_paused', value: '');
     await start_service(true);
     await _refreshCyberdeskRuntimeStatus();
   }
 
-  Future<void> _stopCyberdeskService() async {
-    await start_service(false);
+  Future<void> _disconnectCyberdeskTunnel() async {
+    await bind.mainSetLocalOption(
+        key: 'cyberdesk_tunnel_paused', value: 'Y');
     await _refreshCyberdeskRuntimeStatus();
   }
 

@@ -41,6 +41,7 @@ mod shell;
 const API_KEY_ENC_VERSION: &str = "00";
 const API_KEY_MAX_LEN: usize = 4096;
 pub const REMOTE_KEEPALIVE_FOR_OPTION: &str = "cyberdesk_remote_keepalive_for";
+pub const TUNNEL_PAUSED_OPTION: &str = "cyberdesk_tunnel_paused";
 const INITIAL_RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(16);
 const STABLE_CONNECTION_RESET_AFTER: Duration = Duration::from_secs(10);
@@ -109,6 +110,16 @@ pub fn spawn_if_enabled() {
         );
         return;
     }
+    if tunnel_paused() {
+        log::info!("cyberdesk_tunnel: tunnel paused by local user");
+        set_tunnel_status(
+            TUNNEL_STATUS_STOPPED,
+            Some("Cyberdesk tunnel is disconnected by local user request".to_string()),
+            None,
+            0,
+        );
+        return;
+    }
 
     let api_base = configured_api_base();
 
@@ -143,6 +154,21 @@ pub fn spawn_if_enabled() {
         let mut max_backoff_failures = 0_u32;
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
+            if tunnel_paused() {
+                log::info!("cyberdesk_tunnel: tunnel paused; idle until re-enabled");
+                set_tunnel_status(
+                    TUNNEL_STATUS_STOPPED,
+                    Some("Cyberdesk tunnel is disconnected by local user request".to_string()),
+                    None,
+                    0,
+                );
+                if config_change_rx.changed().await.is_err() {
+                    break;
+                }
+                backoff = INITIAL_RECONNECT_BACKOFF;
+                max_backoff_failures = 0;
+                continue;
+            }
             let Some(api_key) = configured_api_key() else {
                 log::info!("cyberdesk_tunnel: API key cleared; tunnel idle until reconfigured");
                 set_tunnel_status(
@@ -176,6 +202,14 @@ pub fn spawn_if_enabled() {
                 changed = config_change_rx.changed() => {
                     if changed.is_err() {
                         log::info!("cyberdesk_tunnel: config change channel closed; reconnecting");
+                    } else if tunnel_paused() {
+                        log::info!("cyberdesk_tunnel: tunnel paused; closing active tunnel");
+                        set_tunnel_status(
+                            TUNNEL_STATUS_STOPPED,
+                            Some("Cyberdesk tunnel is disconnected by local user request".to_string()),
+                            None,
+                            0,
+                        );
                     } else if configured_api_key().is_none() {
                         log::info!("cyberdesk_tunnel: API key cleared; closing active tunnel");
                         set_tunnel_status(
@@ -319,6 +353,8 @@ pub(crate) fn runtime_status() -> serde_json::Value {
     let raw_status = TUNNEL_STATUS.load(Ordering::SeqCst);
     let status = if !api_key_configured {
         TUNNEL_STATUS_DISABLED
+    } else if tunnel_paused() {
+        TUNNEL_STATUS_STOPPED
     } else if raw_status == TUNNEL_STATUS_DISABLED {
         TUNNEL_STATUS_STOPPED
     } else {
@@ -386,7 +422,7 @@ fn tunnel_status_name(status: u8) -> &'static str {
 fn tunnel_status_label(status: u8) -> &'static str {
     match status {
         TUNNEL_STATUS_DISABLED => "Disabled",
-        TUNNEL_STATUS_STOPPED => "Stopped",
+        TUNNEL_STATUS_STOPPED => "Disconnected",
         TUNNEL_STATUS_CONNECTING => "Connecting",
         TUNNEL_STATUS_CONNECTED => "Connected",
         TUNNEL_STATUS_RECONNECTING => "Reconnecting",
@@ -400,7 +436,9 @@ fn tunnel_status_label(status: u8) -> &'static str {
 fn tunnel_status_message(status: u8) -> &'static str {
     match status {
         TUNNEL_STATUS_DISABLED => "No Cyberdesk API key is configured.",
-        TUNNEL_STATUS_STOPPED => "The tunnel task is not running.",
+        TUNNEL_STATUS_STOPPED => {
+            "Cyberdesk tunnel is disconnected; the streaming service can stay running."
+        }
         TUNNEL_STATUS_CONNECTING => "Opening the Cyberdesk tunnel.",
         TUNNEL_STATUS_CONNECTED => "Dashboard streaming and remote control are online.",
         TUNNEL_STATUS_RECONNECTING => "The tunnel dropped and is retrying.",
@@ -534,6 +572,24 @@ pub(crate) fn clear_configured_api_key() {
     signal_tunnel_config_changed();
 }
 
+pub(crate) fn store_tunnel_paused(paused: bool) {
+    config::LocalConfig::set_option(
+        TUNNEL_PAUSED_OPTION.to_string(),
+        if paused { "Y" } else { "" }.to_string(),
+    );
+    if paused {
+        set_tunnel_status(
+            TUNNEL_STATUS_STOPPED,
+            Some("Cyberdesk tunnel is disconnected by local user request".to_string()),
+            None,
+            0,
+        );
+    } else {
+        set_tunnel_status(TUNNEL_STATUS_CONNECTING, None, None, 0);
+    }
+    signal_tunnel_config_changed();
+}
+
 pub(crate) fn configured_api_base() -> String {
     std::env::var("CYBERDESK_API_BASE")
         .ok()
@@ -570,6 +626,10 @@ pub(crate) fn configured_remote_keepalive_for() -> Option<String> {
                 Some(value.to_string())
             }
         })
+}
+
+fn tunnel_paused() -> bool {
+    config::LocalConfig::get_option(TUNNEL_PAUSED_OPTION) == "Y"
 }
 
 pub(crate) fn store_configured_remote_keepalive_for(machine_id: Option<String>) {

@@ -677,8 +677,8 @@ fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {
 }
 
 fn retry_after_from_reason(reason: &str) -> Option<Duration> {
-    let mut previous_token_was_wait = false;
-    let mut previous_token_was_retry_after = false;
+    let mut wait_window = 0_u8;
+    let mut retry_after_window = 0_u8;
     for token in reason.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '=')) {
         if token.is_empty() {
             continue;
@@ -693,20 +693,19 @@ fn retry_after_from_reason(reason: &str) -> Option<Duration> {
             continue;
         }
         if token.eq_ignore_ascii_case("retry-after") {
-            previous_token_was_retry_after = true;
+            retry_after_window = 3;
             continue;
         }
         if token.eq_ignore_ascii_case("wait") {
-            previous_token_was_wait = true;
+            wait_window = 3;
             continue;
         }
-        if previous_token_was_wait || previous_token_was_retry_after {
-            previous_token_was_wait = false;
-            previous_token_was_retry_after = false;
+        if wait_window > 0 || retry_after_window > 0 {
             if let Ok(seconds) = token.parse::<u64>() {
                 return Some(bounded_retry_after(seconds));
             }
-            continue;
+            wait_window = wait_window.saturating_sub(1);
+            retry_after_window = retry_after_window.saturating_sub(1);
         }
     }
     None
@@ -847,6 +846,16 @@ mod tests {
                 "Rate limited: Too many reconnection attempts. Wait 60 seconds."
             ),
             Some(Duration::from_secs(60))
+        );
+        assert_eq!(
+            retry_after_from_reason(
+                "Rate limited: Too many reconnection attempts. Wait for 61 seconds."
+            ),
+            Some(Duration::from_secs(61))
+        );
+        assert_eq!(
+            retry_after_from_reason("Rate limited. Retry-After: approximately 62 seconds."),
+            Some(Duration::from_secs(62))
         );
     }
 

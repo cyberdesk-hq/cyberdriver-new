@@ -1199,6 +1199,16 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
         sync_cyberdesk_local_option_to_service("cyberdesk_api_base", value);
         return true;
     }
+    #[cfg(feature = "cyberdesk")]
+    if key == crate::cyberdesk_tunnel::TUNNEL_PAUSED_OPTION {
+        let paused = value == "Y";
+        crate::cyberdesk_tunnel::store_tunnel_paused(paused);
+        sync_cyberdesk_local_option_to_service(&key, value);
+        if !paused {
+            crate::cyberdesk_tunnel::spawn_if_enabled();
+        }
+        return true;
+    }
 
     set_local_option(key.clone(), value.clone());
     #[cfg(feature = "cyberdesk")]
