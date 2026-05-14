@@ -1204,9 +1204,6 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
         let paused = value == "Y";
         crate::cyberdesk_tunnel::store_tunnel_paused(paused);
         sync_cyberdesk_local_option_to_service(&key, value);
-        if !paused {
-            crate::cyberdesk_tunnel::spawn_if_enabled();
-        }
         return true;
     }
 
