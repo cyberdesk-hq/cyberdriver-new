@@ -688,6 +688,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
     status_handle.set_service_status(next_status)?;
 
     let mut selected_session = SelectedWindowsSession::current();
+    let mut observed_session = selected_session;
     let mut session_id = selected_session.id;
     log::info!("session id {}", session_id);
     let mut h_process = launch_server(session_id, true).await.unwrap_or(NULL);
@@ -705,7 +706,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
                 let count = ipc::get_port_forward_session_count(1000).await.unwrap_or(0);
                 if count == 0 {
                     maybe_restore_rdp_session_to_console(
-                        selected_session,
+                        observed_session,
                         current_active_session,
                         &mut rdp_console_restore,
                     );
@@ -714,6 +715,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
                 } else {
                     selected_session = current_active_session;
                 }
+                observed_session = selected_session;
                 session_id = selected_session.id;
                 // https://github.com/rustdesk/rustdesk/discussions/10039
                 if count == 0 {
@@ -746,6 +748,9 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
                                         session_id = usid;
                                         selected_session =
                                             SelectedWindowsSession::from_id(session_id);
+                                        // Do not feed user-selected IPC session ids into the
+                                        // privileged tscon restore target. Only WTS-observed
+                                        // transitions update observed_session.
                                         stored_usid = Some(session_id);
                                         h_process =
                                             launch_server(session_id, true).await.unwrap_or(NULL);
@@ -770,7 +775,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
                         let count = ipc::get_port_forward_session_count(1000).await.unwrap_or(0);
                         if count == 0 {
                             maybe_restore_rdp_session_to_console(
-                                selected_session,
+                                observed_session,
                                 tmp_session,
                                 &mut rdp_console_restore,
                             );
@@ -779,6 +784,7 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
                         } else {
                             selected_session = tmp_session;
                         }
+                        observed_session = selected_session;
                         log::info!(
                             "session changed from {} to {}",
                             session_id,
