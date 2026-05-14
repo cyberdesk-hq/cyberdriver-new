@@ -847,7 +847,22 @@ fn spawn_background_command_reaper(
     stderr_reader: OutputReader,
 ) {
     thread::spawn(move || {
-        let _ = child.wait();
+        let max_lifetime = Duration::from_secs(3600);
+        let start = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {
+                    if start.elapsed() >= max_lifetime {
+                        terminate_process_tree(&mut child);
+                        let _ = child.wait();
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(500));
+                }
+                Err(_) => break,
+            }
+        }
         let _ = collect_output_after_timeout(stdout_reader);
         let _ = collect_output_after_timeout(stderr_reader);
         BACKGROUND_COMMANDS.fetch_sub(1, Ordering::AcqRel);
