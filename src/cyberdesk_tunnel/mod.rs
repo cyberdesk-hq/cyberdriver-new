@@ -44,7 +44,7 @@ pub const REMOTE_KEEPALIVE_FOR_OPTION: &str = "cyberdesk_remote_keepalive_for";
 const INITIAL_RECONNECT_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(16);
 const STABLE_CONNECTION_RESET_AFTER: Duration = Duration::from_secs(10);
-const MAX_BACKOFF_WARNING_THRESHOLD: u8 = 3;
+const MAX_BACKOFF_WARNING_THRESHOLD: u32 = 3;
 
 static TUNNEL_CONFIG_REVISION: AtomicU64 = AtomicU64::new(0);
 static TUNNEL_TASK_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -113,7 +113,7 @@ pub fn spawn_if_enabled() {
     // re-export. We deliberately do NOT create a new runtime here.
     hbb_common::tokio::spawn(async move {
         let mut backoff = INITIAL_RECONNECT_BACKOFF;
-        let mut max_backoff_failures = 0_u8;
+        let mut max_backoff_failures = 0_u32;
         let dispatch_semaphore = client::dispatch_semaphore();
         loop {
             let Some(api_key) = configured_api_key() else {
@@ -232,7 +232,7 @@ fn jittered_backoff(base: Duration) -> Duration {
     }
 }
 
-fn should_log_max_backoff_warning(failures: u8) -> bool {
+fn should_log_max_backoff_warning(failures: u32) -> bool {
     failures == MAX_BACKOFF_WARNING_THRESHOLD
         || (failures > MAX_BACKOFF_WARNING_THRESHOLD && failures % 10 == 0)
 }
