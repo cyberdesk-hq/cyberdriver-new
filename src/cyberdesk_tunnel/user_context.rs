@@ -271,10 +271,11 @@ fn ensure_worker(worker: &mut Option<UserContextWorker>, session_id: DWORD) -> R
         &output_pipe_name,
         PIPE_CONNECTION_TIMEOUT_MS,
     )?;
+    let handle = process_guard.disarm();
 
     *worker = Some(UserContextWorker {
         session_id,
-        process_handle: process_guard.disarm() as usize,
+        process_handle: handle as usize,
         input,
         output,
     });
