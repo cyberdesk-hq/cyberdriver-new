@@ -82,6 +82,36 @@ impl Drop for HandleGuard {
     }
 }
 
+struct ProcessHandleGuard {
+    handle: winapi::shared::ntdef::HANDLE,
+    armed: bool,
+}
+
+impl ProcessHandleGuard {
+    fn new(handle: winapi::shared::ntdef::HANDLE) -> Self {
+        Self {
+            handle,
+            armed: true,
+        }
+    }
+
+    fn disarm(mut self) -> winapi::shared::ntdef::HANDLE {
+        self.armed = false;
+        self.handle
+    }
+}
+
+impl Drop for ProcessHandleGuard {
+    fn drop(&mut self) {
+        if self.armed && !self.handle.is_null() {
+            unsafe {
+                TerminateProcess(self.handle, 1);
+                CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
 impl Drop for UserContextWorker {
     fn drop(&mut self) {
         let handle = self.process_handle as winapi::shared::ntdef::HANDLE;
@@ -230,6 +260,7 @@ fn ensure_worker(worker: &mut Option<UserContextWorker>, session_id: DWORD) -> R
     );
     let handle = crate::platform::windows::launch_user_process_in_session(session_id, &cmd, false)
         .context("launching persistent user-context worker")?;
+    let process_guard = ProcessHandleGuard::new(handle);
     let input = crate::server::terminal_helper::wait_for_pipe_connection(
         input_pipe_handle,
         &input_pipe_name,
@@ -243,7 +274,7 @@ fn ensure_worker(worker: &mut Option<UserContextWorker>, session_id: DWORD) -> R
 
     *worker = Some(UserContextWorker {
         session_id,
-        process_handle: handle as usize,
+        process_handle: process_guard.disarm() as usize,
         input,
         output,
     });
