@@ -737,7 +737,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   Future<void> _connectCyberdeskTunnel() async {
     await bind.mainSetLocalOption(
         key: 'cyberdesk_tunnel_paused', value: '');
-    await start_service(true);
+    if (svcStopped.value || stateGlobal.svcStatus.value != SvcStatus.ready) {
+      await start_service(true);
+    }
     await _refreshCyberdeskRuntimeStatus();
   }
 
@@ -1206,6 +1208,14 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         stateGlobal.svcStatus.value = SvcStatus.ready;
       } else {
         stateGlobal.svcStatus.value = SvcStatus.notReady;
+      }
+      if (svcStopped.value) {
+        _cyberdeskTunnelState.value = 'stopped';
+        _cyberdeskTunnelLabel.value = 'Unavailable';
+        _cyberdeskTunnelMessage.value =
+            'Cyberdriver Streaming Service is stopped; the tunnel is not running.';
+        _cyberdeskTunnelLastError.value = '';
+        return;
       }
       final tunnel = status['cyberdesk_tunnel'];
       if (tunnel is Map<String, dynamic>) {

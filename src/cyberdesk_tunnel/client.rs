@@ -262,7 +262,7 @@ pub async fn run(
 
     let (ws, response) = connect_async(request)
         .await
-        .context("WebSocket handshake failed")?;
+        .map_err(websocket_handshake_error)?;
     log::info!(
         "cyberdesk_tunnel: connected (HTTP {})",
         response.status().as_u16()
@@ -493,6 +493,26 @@ fn classify_close_frame(code: u16, reason: &str) -> CloseFrameDecision {
         ),
         4009 => CloseFrameDecision::MachineLimitReached(reason.to_string()),
         _ => CloseFrameDecision::Reconnect,
+    }
+}
+
+fn websocket_handshake_error(err: WsError) -> Error {
+    match &err {
+        WsError::Http(response) => {
+            let status = response.status();
+            let body = response
+                .body()
+                .as_ref()
+                .map(|body| String::from_utf8_lossy(body).trim().to_string())
+                .filter(|body| !body.is_empty())
+                .unwrap_or_default();
+            if body.is_empty() {
+                anyhow!("WebSocket handshake failed: HTTP {}", status)
+            } else {
+                anyhow!("WebSocket handshake failed: HTTP {}: {}", status, body)
+            }
+        }
+        _ => anyhow!("WebSocket handshake failed: {err}"),
     }
 }
 

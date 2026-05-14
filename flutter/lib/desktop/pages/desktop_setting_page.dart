@@ -1626,6 +1626,11 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   }
 
   Future<void> _copyCyberdeskDiagnostics() async {
+    Map<String, dynamic> connectStatus = {};
+    try {
+      connectStatus =
+          jsonDecode(await bind.mainGetConnectStatus()) as Map<String, dynamic>;
+    } catch (_) {}
     final payload = {
       'app': CyberdeskBranding.appName,
       'api_key_configured':
@@ -1640,6 +1645,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
       'keepalive_enabled':
           bind.mainGetLocalOption(key: 'cyberdesk_keepalive_enabled') != 'N',
       'service_status': stateGlobal.svcStatus.value.toString(),
+      'cyberdesk_tunnel': connectStatus['cyberdesk_tunnel'],
       'macos_permissions': {
         if (isMacOS)
           'screen_recording': bind.mainIsCanScreenRecording(prompt: false),
@@ -1870,7 +1876,14 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                                     }
                                     _cyberdeskApiKeyController.clear();
                                   }
-                                  await start_service(true);
+                                  await bind.mainSetLocalOption(
+                                      key: 'cyberdesk_tunnel_paused',
+                                      value: '');
+                                  if (serviceStop.value ||
+                                      stateGlobal.svcStatus.value !=
+                                          SvcStatus.ready) {
+                                    await start_service(true);
+                                  }
                                   setState(() {});
                                 },
                           child: const Text('Save and connect'),
