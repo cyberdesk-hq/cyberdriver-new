@@ -736,29 +736,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   Future<void> _disconnectCyberdeskTunnel() async {
-    setState(() {
-      _cyberdeskApiKeySaving = true;
-    });
-    try {
-      final cleared = await mainSetLocalOption('cyberdesk_api_key', '');
-      if (!cleared) {
-        showToast(translate('Failed'));
-        return;
-      }
-      _cyberdeskApiKeyController.clear();
-      await _refreshCyberdeskRuntimeStatus();
-      if (mounted) {
-        setState(() {
-          _cyberdeskApiKeyEditing = true;
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _cyberdeskApiKeySaving = false;
-        });
-      }
-    }
+    await start_service(false);
+    await _refreshCyberdeskRuntimeStatus();
   }
 
   Future<void> _ensureCyberdeskRemoteDefaults() async {
