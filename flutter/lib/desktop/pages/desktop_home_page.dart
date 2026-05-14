@@ -1201,14 +1201,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     try {
       final status =
           jsonDecode(await bind.mainGetConnectStatus()) as Map<String, dynamic>;
-      final statusNum = status['status_num'] as int? ?? -1;
-      if (statusNum == 0) {
-        stateGlobal.svcStatus.value = SvcStatus.connecting;
-      } else if (statusNum == 1) {
-        stateGlobal.svcStatus.value = SvcStatus.ready;
-      } else {
-        stateGlobal.svcStatus.value = SvcStatus.notReady;
-      }
       if (svcStopped.value) {
         _cyberdeskTunnelState.value = 'stopped';
         _cyberdeskTunnelLabel.value = 'Unavailable';
