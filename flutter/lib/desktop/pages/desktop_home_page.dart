@@ -638,10 +638,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                     _cyberdeskTunnelState.value == 'connected';
                 final onPressed = _cyberdeskApiKeySaving
                     ? null
-                    : tunnelConnected
-                        ? _disconnectCyberdeskTunnel
-                        : editingApiKey
-                            ? () => _saveCyberdeskApiKey(connectAfterSave: true)
+                    : editingApiKey
+                        ? () => _saveCyberdeskApiKey(connectAfterSave: true)
+                        : tunnelConnected
+                            ? _disconnectCyberdeskTunnel
                             : _connectCyberdeskTunnel;
                 final child = _cyberdeskApiKeySaving
                     ? const SizedBox(
@@ -649,10 +649,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : Text(tunnelConnected
-                        ? 'Disconnect'
-                        : editingApiKey
-                            ? 'Save'
+                    : Text(editingApiKey
+                        ? 'Save'
+                        : tunnelConnected
+                            ? 'Disconnect'
                             : 'Connect');
                 if (editingApiKey) {
                   return ElevatedButton(
