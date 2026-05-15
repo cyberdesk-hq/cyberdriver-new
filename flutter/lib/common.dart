@@ -1572,6 +1572,10 @@ bool option2bool(String option, String value) {
   bool res;
   if (option.startsWith("enable-")) {
     res = value != "N";
+  } else if ((option == kOptionAllowRemoteConfigModification ||
+          option == kOptionAllowRemoteCmModification) &&
+      value.isEmpty) {
+    res = true;
   } else if (option.startsWith("allow-") ||
       option == kOptionStopService ||
       option == kOptionDirectServer ||
