@@ -1091,9 +1091,14 @@ pub fn main_get_connect_status() -> String {
             serde_json::to_value(get_connect_status()).unwrap_or_else(|_| serde_json::json!({}));
         #[cfg(feature = "cyberdesk")]
         if let Some(map) = value.as_object_mut() {
+            let tunnel_status = crate::ipc::get_cyberdesk_tunnel_status(1_000)
+                .ok()
+                .flatten()
+                .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
+                .unwrap_or_else(crate::cyberdesk_tunnel::runtime_status);
             map.insert(
                 "cyberdesk_tunnel".to_string(),
-                crate::cyberdesk_tunnel::runtime_status(),
+                tunnel_status,
             );
         }
         serde_json::to_string(&value).unwrap_or("".to_string())

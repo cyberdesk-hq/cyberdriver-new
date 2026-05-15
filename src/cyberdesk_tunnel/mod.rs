@@ -553,6 +553,7 @@ fn decode_configured_api_key(value: &str) -> Option<(String, bool)> {
 }
 
 pub(crate) fn store_configured_api_key(api_key: String) -> Result<(), &'static str> {
+    crate::cyberdesk_branding::ensure_environment_configured();
     let encrypted = encrypt_str_or_original(&api_key, API_KEY_ENC_VERSION, API_KEY_MAX_LEN);
     if encrypted.is_empty() {
         log::error!("cyberdesk_tunnel: refusing to store oversized Cyberdesk API key");

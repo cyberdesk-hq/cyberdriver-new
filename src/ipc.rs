@@ -258,6 +258,8 @@ pub enum Data {
     OnlineStatus(Option<(i64, bool)>),
     Config((String, Option<String>)),
     LocalConfig((String, Option<String>)),
+    #[cfg(feature = "cyberdesk")]
+    CyberdeskTunnelStatus(Option<String>),
     Options(Option<HashMap<String, String>>),
     NatType(Option<i32>),
     ConfirmedKey(Option<(Vec<u8>, Vec<u8>)>),
@@ -761,6 +763,15 @@ async fn handle(data: Data, stream: &mut Connection) {
                 set_local_option(name, value);
             }
         },
+        #[cfg(feature = "cyberdesk")]
+        Data::CyberdeskTunnelStatus(_) => {
+            let value = crate::cyberdesk_tunnel::runtime_status().to_string();
+            allow_err!(
+                stream
+                    .send(&Data::CyberdeskTunnelStatus(Some(value)))
+                    .await
+            );
+        }
         Data::Options(value) => match value {
             None => {
                 let v = Config::get_options();
@@ -1201,6 +1212,22 @@ pub async fn set_local_config_async(name: &str, value: String) -> ResultType<()>
     c.send(&Data::LocalConfig((name.to_owned(), Some(value))))
         .await?;
     Ok(())
+}
+
+#[cfg(feature = "cyberdesk")]
+pub async fn get_cyberdesk_tunnel_status_async(ms_timeout: u64) -> ResultType<Option<String>> {
+    let mut c = connect(ms_timeout, "").await?;
+    c.send(&Data::CyberdeskTunnelStatus(None)).await?;
+    if let Some(Data::CyberdeskTunnelStatus(value)) = c.next_timeout(ms_timeout).await? {
+        return Ok(value);
+    }
+    Ok(None)
+}
+
+#[cfg(feature = "cyberdesk")]
+#[tokio::main(flavor = "current_thread")]
+pub async fn get_cyberdesk_tunnel_status(ms_timeout: u64) -> ResultType<Option<String>> {
+    get_cyberdesk_tunnel_status_async(ms_timeout).await
 }
 
 #[tokio::main(flavor = "current_thread")]
