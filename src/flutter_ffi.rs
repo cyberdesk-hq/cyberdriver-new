@@ -1189,24 +1189,25 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
             log::error!("refusing to store Cyberdesk API key without encryption: {message}");
             return false;
         } else {
-            sync_cyberdesk_local_option_to_service("cyberdesk_api_key", value);
-            crate::cyberdesk_tunnel::spawn_if_enabled();
+            if !sync_cyberdesk_local_option_to_service("cyberdesk_api_key", value) {
+                crate::cyberdesk_tunnel::spawn_if_enabled();
+            }
             return true;
         }
     }
     #[cfg(feature = "cyberdesk")]
     if key == "cyberdesk_api_base" {
         crate::cyberdesk_tunnel::store_configured_api_base(value.clone());
-        sync_cyberdesk_local_option_to_service("cyberdesk_api_base", value);
-        crate::cyberdesk_tunnel::spawn_if_enabled();
+        if !sync_cyberdesk_local_option_to_service("cyberdesk_api_base", value) {
+            crate::cyberdesk_tunnel::spawn_if_enabled();
+        }
         return true;
     }
     #[cfg(feature = "cyberdesk")]
     if key == crate::cyberdesk_tunnel::TUNNEL_PAUSED_OPTION {
         let paused = value == "Y";
         crate::cyberdesk_tunnel::store_tunnel_paused(paused);
-        sync_cyberdesk_local_option_to_service(&key, value);
-        if !paused {
+        if !sync_cyberdesk_local_option_to_service(&key, value) && !paused {
             crate::cyberdesk_tunnel::spawn_if_enabled();
         }
         return true;
@@ -1234,13 +1235,17 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
 }
 
 #[cfg(feature = "cyberdesk")]
-fn sync_cyberdesk_local_option_to_service(key: &str, value: String) {
+fn sync_cyberdesk_local_option_to_service(key: &str, value: String) -> bool {
     #[cfg(windows)]
     {
-        if let Err(err) = crate::ipc::set_local_config(key, value) {
-            log::warn!(
-                "failed to sync Cyberdesk local option {key} to running server process: {err}"
-            );
+        match crate::ipc::set_local_config(key, value) {
+            Ok(()) => return true,
+            Err(err) => {
+                log::warn!(
+                    "failed to sync Cyberdesk local option {key} to running server process: {err}"
+                );
+                return false;
+            }
         }
     }
     #[cfg(all(not(windows), not(any(target_os = "android", target_os = "ios"))))]
@@ -1248,12 +1253,16 @@ fn sync_cyberdesk_local_option_to_service(key: &str, value: String) {
         if crate::platform::is_installed() {
             if let Err(err) = crate::ipc::set_local_config(key, value) {
                 log::warn!("failed to sync Cyberdesk local option {key} to server process: {err}");
+                return false;
             }
+            return true;
         }
+        false
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _ = (key, value);
+        false
     }
 }
 
