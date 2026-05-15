@@ -424,7 +424,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   Widget buildCyberdeskTunnelSetting(BuildContext context) {
-    final cyberdeskApiKeyConfigured =
+    bool cyberdeskApiKeyConfigured() =>
         bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
 
     String serviceStatusLabel() {
@@ -577,7 +577,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               ],
             );
           }).marginOnly(bottom: 10),
-          if (_cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured)
+          if (_cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured())
             TextField(
               controller: _cyberdeskApiKeyController,
               enabled: !_cyberdeskApiKeySaving,
@@ -633,7 +633,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           Row(
             children: [
               Obx(() {
-                final editingApiKey = _cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured;
+                final editingApiKey = _cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured();
                 final tunnelConnected =
                     _cyberdeskTunnelState.value == 'connected';
                 final onPressed = _cyberdeskApiKeySaving
@@ -665,7 +665,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                   child: child,
                 );
               }),
-              if ((_cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured) && cyberdeskApiKeyConfigured) ...[
+              if ((_cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured()) && cyberdeskApiKeyConfigured()) ...[
                 const SizedBox(width: 8),
                 TextButton(
                   onPressed: _cyberdeskApiKeySaving
@@ -680,7 +680,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 ),
               ],
               const Spacer(),
-              if (!(_cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured) && cyberdeskApiKeyConfigured) ...[
+              if (!(_cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured()) && cyberdeskApiKeyConfigured()) ...[
                 TextButton(
                   onPressed: _cyberdeskApiKeySaving
                       ? null

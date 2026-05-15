@@ -33,6 +33,7 @@ use winapi::{
 const PIPE_CONNECTION_TIMEOUT_MS: u32 = 10_000;
 const HELPER_TIMEOUT_SECONDS: u64 = 30;
 const MAX_HELPER_MESSAGE_BYTES: usize = 160 * 1024 * 1024;
+const HELPER_TIMEOUT_SECONDS: u64 = 15;
 
 static USER_WORKER: Mutex<Option<UserContextWorker>> = Mutex::new(None);
 
@@ -183,32 +184,49 @@ fn dispatch_user_context(meta: &RequestMeta, body: &[u8]) -> Result<(u16, Vec<u8
         query: meta.query.clone(),
         body_base64: BASE64_STANDARD.encode(body),
     };
-    let mut worker_guard = USER_WORKER
-        .lock()
-        .map_err(|_| anyhow!("user-context worker lock poisoned"))?;
-    ensure_worker(&mut worker_guard, session_id)?;
-    let worker = worker_guard
-        .as_mut()
-        .ok_or_else(|| anyhow!("user-context worker unavailable after launch"))?;
     let request_bytes = serde_json::to_vec(&request)?;
-    let response_bytes =
-        match send_worker_request(worker, &request_bytes, helper_timeout(meta, body)) {
-            Ok(response) => response,
-            Err(err) => {
-                *worker_guard = None;
-                return Ok((
-                    500,
-                    with_execution_context(
-                        serde_json::json!({"error": format!("user-context worker failed: {err:#}")})
-                            .to_string()
-                            .into_bytes(),
-                        "user",
-                        Some("user-context worker failed after request dispatch"),
-                    ),
-                    "application/json",
-                ));
-            }
-        };
+    let timeout = helper_timeout(meta, body);
+
+    let (mut input, mut output) = {
+        let mut worker_guard = USER_WORKER
+            .lock()
+            .map_err(|_| anyhow!("user-context worker lock poisoned"))?;
+        ensure_worker(&mut worker_guard, session_id)?;
+        let worker = worker_guard
+            .as_mut()
+            .ok_or_else(|| anyhow!("user-context worker unavailable after launch"))?;
+        let input = worker
+            .input
+            .try_clone()
+            .context("cloning user-context worker input pipe")?;
+        let output = worker
+            .output
+            .try_clone()
+            .context("cloning user-context worker output pipe")?;
+        (input, output)
+    };
+
+    let response_bytes = match send_worker_request(&mut input, &mut output, &request_bytes, timeout)
+    {
+        Ok(response) => response,
+        Err(err) => {
+            let mut worker_guard = USER_WORKER
+                .lock()
+                .map_err(|_| anyhow!("user-context worker lock poisoned"))?;
+            *worker_guard = None;
+            return Ok((
+                500,
+                with_execution_context(
+                    serde_json::json!({"error": format!("user-context worker failed: {err:#}")})
+                        .to_string()
+                        .into_bytes(),
+                    "user",
+                    Some("user-context worker failed after request dispatch"),
+                ),
+                "application/json",
+            ));
+        }
+    };
     let response: HelperResponse =
         serde_json::from_slice(&response_bytes).context("decoding user-context helper response")?;
     let body = BASE64_STANDARD
@@ -283,19 +301,19 @@ fn ensure_worker(worker: &mut Option<UserContextWorker>, session_id: DWORD) -> R
 }
 
 fn send_worker_request(
-    worker: &mut UserContextWorker,
+    input: &mut File,
+    output: &mut File,
     request: &[u8],
     timeout: Duration,
 ) -> Result<Vec<u8>> {
-    let mut output = worker
-        .output
+    let mut output_clone = output
         .try_clone()
-        .context("cloning user-context worker output pipe")?;
+        .context("cloning user-context worker output pipe for read")?;
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let _ = tx.send(read_message(&mut output));
+        let _ = tx.send(read_message(&mut output_clone));
     });
-    write_message(&mut worker.input, request).context("sending user-context worker request")?;
+    write_message(input, request).context("sending user-context worker request")?;
     rx.recv_timeout(timeout)
         .context("timed out waiting for user-context worker response")?
         .context("reading user-context worker response")
