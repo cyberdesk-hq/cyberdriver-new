@@ -187,7 +187,7 @@ fn dispatch_user_context(meta: &RequestMeta, body: &[u8]) -> Result<(u16, Vec<u8
     let request_bytes = serde_json::to_vec(&request)?;
     let timeout = helper_timeout(meta, body);
 
-    let (mut input, mut output) = {
+    let response_bytes = {
         let mut worker_guard = USER_WORKER
             .lock()
             .map_err(|_| anyhow!("user-context worker lock poisoned"))?;
@@ -195,36 +195,24 @@ fn dispatch_user_context(meta: &RequestMeta, body: &[u8]) -> Result<(u16, Vec<u8
         let worker = worker_guard
             .as_mut()
             .ok_or_else(|| anyhow!("user-context worker unavailable after launch"))?;
-        let input = worker
-            .input
-            .try_clone()
-            .context("cloning user-context worker input pipe")?;
-        let output = worker
-            .output
-            .try_clone()
-            .context("cloning user-context worker output pipe")?;
-        (input, output)
-    };
 
-    let response_bytes = match send_worker_request(&mut input, &mut output, &request_bytes, timeout)
-    {
-        Ok(response) => response,
-        Err(err) => {
-            let mut worker_guard = USER_WORKER
-                .lock()
-                .map_err(|_| anyhow!("user-context worker lock poisoned"))?;
-            *worker_guard = None;
-            return Ok((
-                500,
-                with_execution_context(
-                    serde_json::json!({"error": format!("user-context worker failed: {err:#}")})
-                        .to_string()
-                        .into_bytes(),
-                    "user",
-                    Some("user-context worker failed after request dispatch"),
-                ),
-                "application/json",
-            ));
+        match send_worker_request(&mut worker.input, &mut worker.output, &request_bytes, timeout)
+        {
+            Ok(response) => response,
+            Err(err) => {
+                *worker_guard = None;
+                return Ok((
+                    500,
+                    with_execution_context(
+                        serde_json::json!({"error": format!("user-context worker failed: {err:#}")})
+                            .to_string()
+                            .into_bytes(),
+                        "user",
+                        Some("user-context worker failed after request dispatch"),
+                    ),
+                    "application/json",
+                ));
+            }
         }
     };
     let response: HelperResponse =
