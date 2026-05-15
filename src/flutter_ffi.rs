@@ -1231,10 +1231,10 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
 #[cfg(feature = "cyberdesk")]
 fn sync_cyberdesk_local_option_to_service(key: &str, value: String) {
     #[cfg(windows)]
-    if crate::platform::is_installed() {
+    {
         if let Err(err) = crate::ipc::set_local_config(key, value) {
             log::warn!(
-                "failed to sync Cyberdesk local option {key} to Windows service profile: {err}"
+                "failed to sync Cyberdesk local option {key} to running server process: {err}"
             );
         }
     }

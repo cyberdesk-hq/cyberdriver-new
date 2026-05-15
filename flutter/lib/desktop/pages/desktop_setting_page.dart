@@ -1540,6 +1540,8 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
   bool locked = !isWeb && bind.mainIsInstalled();
+  final RxBool serviceStop =
+      isWeb ? RxBool(false) : Get.find<RxBool>(tag: 'stop-service');
   final _cyberdeskApiKeyController = TextEditingController();
   final _remoteKeepaliveForController = TextEditingController();
   bool _cyberdeskApiKeyObscured = true;
