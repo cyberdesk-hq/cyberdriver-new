@@ -133,10 +133,12 @@ function Invoke-CyberdriverStop {
 }
 
 function Get-CyberdriverUninstallEntries {
+    # This reset script runs elevated, so do not consume HKCU uninstall commands.
+    # A non-admin user can plant HKCU uninstall entries; elevated cleanup must
+    # only use machine-wide MSI product codes, never registry command strings.
     $roots = @(
         "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall",
-        "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall"
+        "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
     )
 
     foreach ($root in $roots) {
@@ -153,7 +155,6 @@ function Get-CyberdriverUninstallEntries {
                     Publisher = $props.Publisher
                     ProductCode = $item.PSChildName
                     UninstallString = $props.UninstallString
-                    QuietUninstallString = $props.QuietUninstallString
                     RegistryPath = $item.PSPath
                 }
             }
@@ -199,24 +200,8 @@ function Invoke-CyberdriverUninstall {
                 $script:RebootRecommended = $true
             }
         }
-        elseif ($entry.QuietUninstallString) {
-            try {
-                $process = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", $entry.QuietUninstallString) -Wait -PassThru
-                if ($process.ExitCode -eq 0) {
-                    Add-Removed "Quiet uninstall" ("{0} exit 0" -f $entry.DisplayName)
-                }
-                else {
-                    Add-Failure ("Quiet uninstall failed for {0} with exit code {1}" -f $entry.DisplayName, $process.ExitCode)
-                    $script:RebootRecommended = $true
-                }
-            }
-            catch {
-                Add-Failure ("Quiet uninstall threw for {0}: {1}" -f $entry.DisplayName, $_.Exception.Message)
-                $script:RebootRecommended = $true
-            }
-        }
         else {
-            Add-Failure ("No MSI product code or quiet uninstall string for {0}" -f $entry.DisplayName)
+            Add-Failure ("No MSI product code found for {0}; skipping registry command execution" -f $entry.DisplayName)
         }
     }
 }
