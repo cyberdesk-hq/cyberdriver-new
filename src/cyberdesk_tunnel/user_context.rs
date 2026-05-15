@@ -31,9 +31,8 @@ use winapi::{
 };
 
 const PIPE_CONNECTION_TIMEOUT_MS: u32 = 10_000;
-const HELPER_TIMEOUT_SECONDS: u64 = 30;
 const MAX_HELPER_MESSAGE_BYTES: usize = 160 * 1024 * 1024;
-const HELPER_TIMEOUT_SECONDS: u64 = 15;
+const HELPER_TIMEOUT_SECONDS: u64 = 30;
 
 static USER_WORKER: Mutex<Option<UserContextWorker>> = Mutex::new(None);
 
