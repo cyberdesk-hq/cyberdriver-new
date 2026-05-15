@@ -84,7 +84,14 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   Widget _buildBlock({required Widget child}) {
     return buildRemoteBlock(
-        block: _block, mask: true, use: canBeBlocked, child: child);
+        block: _block, mask: true, use: _canBlockHome, child: child);
+  }
+
+  Future<bool> _canBlockHome() async {
+    if (bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isEmpty) {
+      return false;
+    }
+    return canBeBlocked();
   }
 
   Widget buildLeftPane(BuildContext context) {
@@ -427,14 +434,17 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     bool cyberdeskApiKeyConfigured() =>
         bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
 
-    String serviceStatusLabel() {
+    String serviceStatusLabel({
+      required bool serviceStopped,
+      required SvcStatus serviceStatus,
+    }) {
       if (!cyberdeskApiKeyConfigured()) {
         return 'API key required';
       }
-      if (svcStopped.value) {
+      if (serviceStopped) {
         return 'Stopped';
       }
-      switch (stateGlobal.svcStatus.value) {
+      switch (serviceStatus) {
         case SvcStatus.ready:
           return 'Ready';
         case SvcStatus.connecting:
@@ -444,15 +454,17 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       }
     }
 
-    Color serviceStatusColor() {
+    Color serviceStatusColor({
+      required bool serviceStopped,
+      required SvcStatus serviceStatus,
+    }) {
       if (!cyberdeskApiKeyConfigured()) {
         return kColorWarn;
       }
-      if (svcStopped.value ||
-          stateGlobal.svcStatus.value == SvcStatus.notReady) {
+      if (serviceStopped || serviceStatus == SvcStatus.notReady) {
         return Theme.of(context).disabledColor;
       }
-      if (stateGlobal.svcStatus.value == SvcStatus.connecting) {
+      if (serviceStatus == SvcStatus.connecting) {
         return kColorWarn;
       }
       return MyTheme.accent;
@@ -548,12 +560,22 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               ),
             ],
           ),
-          Obx(() => statusRow(
-                icon: Icons.desktop_windows_outlined,
-                label: CyberdeskBranding.streamingServiceStatusLabel,
-                value: serviceStatusLabel(),
-                color: serviceStatusColor(),
-              )),
+          Obx(() {
+            final serviceStopped = svcStopped.value;
+            final serviceStatus = stateGlobal.svcStatus.value;
+            return statusRow(
+              icon: Icons.desktop_windows_outlined,
+              label: CyberdeskBranding.streamingServiceStatusLabel,
+              value: serviceStatusLabel(
+                serviceStopped: serviceStopped,
+                serviceStatus: serviceStatus,
+              ),
+              color: serviceStatusColor(
+                serviceStopped: serviceStopped,
+                serviceStatus: serviceStatus,
+              ),
+            );
+          }),
           Obx(() => statusRow(
                 icon: Icons.cloud_queue_outlined,
                 label: CyberdeskBranding.tunnelStatusLabel,

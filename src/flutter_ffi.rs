@@ -1190,6 +1190,7 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
             return false;
         } else {
             sync_cyberdesk_local_option_to_service("cyberdesk_api_key", value);
+            crate::cyberdesk_tunnel::spawn_if_enabled();
             return true;
         }
     }
@@ -1197,6 +1198,7 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
     if key == "cyberdesk_api_base" {
         crate::cyberdesk_tunnel::store_configured_api_base(value.clone());
         sync_cyberdesk_local_option_to_service("cyberdesk_api_base", value);
+        crate::cyberdesk_tunnel::spawn_if_enabled();
         return true;
     }
     #[cfg(feature = "cyberdesk")]
@@ -1204,6 +1206,9 @@ pub fn main_set_local_option(key: String, value: String) -> bool {
         let paused = value == "Y";
         crate::cyberdesk_tunnel::store_tunnel_paused(paused);
         sync_cyberdesk_local_option_to_service(&key, value);
+        if !paused {
+            crate::cyberdesk_tunnel::spawn_if_enabled();
+        }
         return true;
     }
 
