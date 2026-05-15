@@ -37,6 +37,8 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
 
   double get em => 14.0;
   double? get height => bind.isIncomingOnly() ? null : em * 3;
+  bool get _cyberdeskApiKeyConfigured =>
+      bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
 
   void onUsePublicServerGuide() {
     const url = "https://rustdesk.com/pricing";
@@ -65,9 +67,11 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
   Widget build(BuildContext context) {
     final isIncomingOnly = bind.isIncomingOnly();
     startServiceWidget() => Offstage(
-          offstage: !_svcStopped.value,
+          offstage: !_svcStopped.value || !_cyberdeskApiKeyConfigured,
           child: InkWell(
                   onTap: () async {
+                    await bind.mainSetLocalOption(
+                        key: 'cyberdesk_tunnel_paused', value: '');
                     await start_service(true);
                   },
                   child: Text(CyberdeskBranding.enableServiceLabel,
@@ -115,7 +119,8 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
               width: 8,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(4),
-                color: _svcStopped.value ||
+                color: !_cyberdeskApiKeyConfigured ||
+                        _svcStopped.value ||
                         stateGlobal.svcStatus.value == SvcStatus.connecting
                     ? kColorWarn
                     : (stateGlobal.svcStatus.value == SvcStatus.ready
@@ -154,13 +159,15 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
   _buildConnStatusMsg() {
     widget.onSvcStatusChanged?.call();
     return Text(
-      _svcStopped.value
-          ? translate("Service is not running")
-          : stateGlobal.svcStatus.value == SvcStatus.connecting
-              ? translate("connecting_status")
-              : stateGlobal.svcStatus.value == SvcStatus.notReady
-                  ? translate("not_ready_status")
-                  : translate('Ready'),
+      !_cyberdeskApiKeyConfigured
+          ? 'Cyberdesk API key required'
+          : _svcStopped.value
+              ? translate("Service is not running")
+              : stateGlobal.svcStatus.value == SvcStatus.connecting
+                  ? translate("connecting_status")
+                  : stateGlobal.svcStatus.value == SvcStatus.notReady
+                      ? translate("not_ready_status")
+                      : translate('Ready'),
       style: TextStyle(fontSize: em),
     );
   }

@@ -1572,6 +1572,10 @@ bool option2bool(String option, String value) {
   bool res;
   if (option.startsWith("enable-")) {
     res = value != "N";
+  } else if ((option == kOptionAllowRemoteConfigModification ||
+          option == kOptionAllowRemoteCmModification) &&
+      value.isEmpty) {
+    res = true;
   } else if (option.startsWith("allow-") ||
       option == kOptionStopService ||
       option == kOptionDirectServer ||
@@ -4203,8 +4207,7 @@ Widget? buildAvatarWidget({
       width: size,
       height: size,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) =>
-          fallback ?? SizedBox.shrink(),
+      errorBuilder: (_, __, ___) => fallback ?? SizedBox.shrink(),
     ),
   );
 }

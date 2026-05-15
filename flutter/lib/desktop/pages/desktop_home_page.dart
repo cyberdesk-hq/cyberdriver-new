@@ -428,6 +428,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty;
 
     String serviceStatusLabel() {
+      if (!cyberdeskApiKeyConfigured()) {
+        return 'API key required';
+      }
       if (svcStopped.value) {
         return 'Stopped';
       }
@@ -442,6 +445,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     }
 
     Color serviceStatusColor() {
+      if (!cyberdeskApiKeyConfigured()) {
+        return kColorWarn;
+      }
       if (svcStopped.value ||
           stateGlobal.svcStatus.value == SvcStatus.notReady) {
         return Theme.of(context).disabledColor;
@@ -461,6 +467,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         case 'rate_limited':
           return kColorWarn;
         case 'disabled':
+          return Theme.of(context).disabledColor;
         case 'stopped':
         case 'auth_rejected':
         case 'machine_limit_reached':
@@ -565,6 +572,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                     style: Theme.of(context).textTheme.bodySmall,
                   ).marginOnly(top: 8),
                 if (lastError.isNotEmpty &&
+                    cyberdeskApiKeyConfigured() &&
                     _cyberdeskTunnelState.value != 'connected')
                   Text(
                     'Last tunnel error: $lastError',
@@ -633,7 +641,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           Row(
             children: [
               Obx(() {
-                final editingApiKey = _cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured();
+                final editingApiKey =
+                    _cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured();
                 final tunnelConnected =
                     _cyberdeskTunnelState.value == 'connected';
                 final onPressed = _cyberdeskApiKeySaving
@@ -665,7 +674,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                   child: child,
                 );
               }),
-              if ((_cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured()) && cyberdeskApiKeyConfigured()) ...[
+              if ((_cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured()) &&
+                  cyberdeskApiKeyConfigured()) ...[
                 const SizedBox(width: 8),
                 TextButton(
                   onPressed: _cyberdeskApiKeySaving
@@ -680,11 +690,17 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 ),
               ],
               const Spacer(),
-              if (!(_cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured()) && cyberdeskApiKeyConfigured()) ...[
+              if (!(_cyberdeskApiKeyEditing || !cyberdeskApiKeyConfigured()) &&
+                  cyberdeskApiKeyConfigured()) ...[
                 TextButton(
                   onPressed: _cyberdeskApiKeySaving
                       ? null
                       : () async {
+                          await bind.mainSetLocalOption(
+                              key: 'cyberdesk_tunnel_paused', value: 'Y');
+                          if (!svcStopped.value) {
+                            await start_service(false);
+                          }
                           await bind.mainSetLocalOption(
                               key: 'cyberdesk_api_key', value: '');
                           _cyberdeskApiKeyController.clear();
@@ -735,8 +751,13 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   Future<void> _connectCyberdeskTunnel() async {
-    await bind.mainSetLocalOption(
-        key: 'cyberdesk_tunnel_paused', value: '');
+    if (!bind.mainGetLocalOption(key: 'cyberdesk_api_key').trim().isNotEmpty) {
+      setState(() {
+        _cyberdeskApiKeyEditing = true;
+      });
+      return;
+    }
+    await bind.mainSetLocalOption(key: 'cyberdesk_tunnel_paused', value: '');
     if (svcStopped.value || stateGlobal.svcStatus.value != SvcStatus.ready) {
       await start_service(true);
     }
@@ -744,8 +765,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   Future<void> _disconnectCyberdeskTunnel() async {
-    await bind.mainSetLocalOption(
-        key: 'cyberdesk_tunnel_paused', value: 'Y');
+    await bind.mainSetLocalOption(key: 'cyberdesk_tunnel_paused', value: 'Y');
+    if (!svcStopped.value) {
+      await start_service(false);
+    }
     await _refreshCyberdeskRuntimeStatus();
   }
 

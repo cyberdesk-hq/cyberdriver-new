@@ -31,7 +31,6 @@
 		<CustomAction Id="SetPropertyServiceStop.SetParam.PropertyName" Return="check" Property="PropertyName" Value="STOP_SERVICE" />
 		<CustomAction Id="TryDeleteStartupShortcut.SetParam" Return="check" Property="ShortcutName" Value="$(var.Product) Tray" />
 		<CustomAction Id="RemoveAmyuniIdd.SetParam" Return="check" Property="RemoveAmyuniIdd" Value="[INSTALLFOLDER_INNER]" />
-		<CustomAction Id="InstallPrinter.SetParam" Return="check" Property="InstallPrinter" Value="[INSTALLFOLDER_INNER]" />
 		<InstallExecuteSequence>
 
 			<Custom Action="SetPropertyIsServiceRunning" After="InstallInitialize" Condition="Installed" />
@@ -61,18 +60,6 @@
 			<!-- https://learn.microsoft.com/en-us/windows/win32/msi/uilevel -->
 			<Custom Action="LaunchApp" After="InstallFinalize" Condition="(NOT UILevel=2) AND (NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) "/>
 			<Custom Action="LaunchAppTray" After="InstallFinalize" Condition="(LAUNCH_TRAY_APP=&quot;Y&quot; OR LAUNCH_TRAY_APP=&quot;1&quot;) AND (NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)"/>
-
-			<!-- https://learn.microsoft.com/en-us/windows/win32/msi/operating-system-property-values -->
-			<!-- We have to use `VersionNT` to instead of `IsWindows10OrGreater()` in the custom action.
-			Because `IsWindows10OrGreater()` requires the manifest file to be embedded in the executable/dll file.
-			Even I have embedded the manifest file, it still does not work correctly in my case.
-			https://learn.microsoft.com/en-us/windows/win32/sysinfo/version-helper-apis -->
-			<!-- VersionNT >= 603 means can't differentiate between Windows 8.1 and Windows 10.
-			Some msi packages reset the `VersionNT` value to 1000 on Windows 10.
-			https://www.advancedinstaller.com/user-guide/qa-OS-dependent-install.html -->
-			<!-- Remote printer also works on Win8.1 in my test. -->
-			<Custom Action="InstallPrinter" Before="InstallFinalize" Condition="VersionNT &gt;= 603 AND PRINTER = 1 OR PRINTER = &quot;Y&quot; OR PRINTER = &quot;y&quot;" />
-			<Custom Action="InstallPrinter.SetParam" Before="InstallPrinter" Condition="VersionNT &gt;= 603" />
 
 			<!--Workaround of "fire:FirewallException". If Outbound="Yes" or Outbound="true", the following error occurs.-->
 			<!--ExecFirewallExceptions: Error 0x80070057: failed to add app to the authorized apps list-->
@@ -134,6 +121,12 @@
 				<RegistryValue Root="HKCU" Key="Software\$(var.Product)" Name="App.StartupFolder.ShortcutTray" Type="string" Value="1" KeyPath="yes" />
 			</Component>
 		</StandardDirectory>
+		<DirectoryRef Id="INSTALLFOLDER_INNER">
+			<Component Id="App.PathEnvironment" Guid="A97D7095-1E53-4F75-A611-48C49A4E709B">
+				<Environment Id="App.PathEnvironment.Value" Name="PATH" Value="[INSTALLFOLDER_INNER]" Permanent="no" Part="last" Action="set" System="yes" />
+				<RegistryValue Root="HKLM" Key="Software\$(var.Product)" Name="PathEnvironment" Type="integer" Value="1" KeyPath="yes" />
+			</Component>
+		</DirectoryRef>
 
 		<!--<DirectoryRef Id="INSTALLFOLDER_INNER">
 			<Component Id="App.UninstallShortcut" Guid="FB0F2AC7-2AE5-4C54-B860-5E472620B6B1">
@@ -148,6 +141,7 @@
 			<ComponentRef Id="App.StartMenu.Shortcut" />
 			<ComponentRef Id="App.StartMenu.ShortcutUninstall" />
 			<ComponentRef Id="App.StartupFolder.ShortcutTray" />
+			<ComponentRef Id="App.PathEnvironment" />
 
 			<!--$AutoComonentStart$-->
 			<!--$AutoComponentEnd$-->
