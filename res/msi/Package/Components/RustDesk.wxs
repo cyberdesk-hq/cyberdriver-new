@@ -76,8 +76,6 @@
 			<Custom Action="RemoveFirewallRules" Before="RemoveFiles"/>
 			<Custom Action="RemoveFirewallRules.SetParam" Before="RemoveFirewallRules"/>
 
-			<Custom Action="UninstallPrinter" Before="RemoveInstallFolder" Condition="VersionNT &gt;= 603" />
-
 			<Custom Action="TerminateProcesses" Before="RemoveInstallFolder"/>
 			<Custom Action="TerminateProcesses.SetParam" Before="TerminateProcesses"/>
 			<Custom Action="TerminateBrokers" Before="RemoveInstallFolder"/>

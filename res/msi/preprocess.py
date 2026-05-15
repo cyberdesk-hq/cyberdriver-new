@@ -196,7 +196,6 @@ def replace_app_name_in_custom_actions(app_name):
             lines = f.readlines()
         for i, line in enumerate(lines):
             line = re.sub(r"\bRustDesk\b", app_name, line)
-            line = line.replace(f"{app_name} v4 Printer Driver", "RustDesk v4 Printer Driver")
             lines[i] = line
         with open(file_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
