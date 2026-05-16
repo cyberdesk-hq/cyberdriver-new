@@ -940,11 +940,22 @@ pub fn main_generate_new_identity() -> String {
         return String::new();
     }
     #[cfg(feature = "cyberdesk")]
-    match crate::cyberdesk_tunnel::generate_new_identity() {
-        Ok(id) => id,
-        Err(err) => {
-            log::error!("failed to generate new Cyberdriver identity: {err}");
-            String::new()
+    {
+        if is_installed() {
+            return match crate::ipc::generate_new_identity() {
+                Ok(id) => id,
+                Err(err) => {
+                    log::error!("failed to generate new Cyberdriver identity in daemon: {err}");
+                    String::new()
+                }
+            };
+        }
+        match crate::cyberdesk_tunnel::generate_new_identity() {
+            Ok(id) => id,
+            Err(err) => {
+                log::error!("failed to generate new Cyberdriver identity: {err}");
+                String::new()
+            }
         }
     }
 }

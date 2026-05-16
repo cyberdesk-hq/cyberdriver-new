@@ -633,6 +633,26 @@ async fn handle(data: Data, stream: &mut Connection) {
                 let value;
                 if name == "id" {
                     value = Some(Config::get_id());
+                } else if name == "generate-new-identity" {
+                    #[cfg(feature = "cyberdesk")]
+                    {
+                        value = match crate::cyberdesk_tunnel::generate_new_identity() {
+                            Ok(id) => {
+                                RendezvousMediator::restart();
+                                Some(id)
+                            }
+                            Err(err) => {
+                                log::error!(
+                                    "failed to generate new Cyberdriver identity in daemon: {err}"
+                                );
+                                None
+                            }
+                        };
+                    }
+                    #[cfg(not(feature = "cyberdesk"))]
+                    {
+                        value = None;
+                    }
                 } else if name == "temporary-password" {
                     value = Some(password::temporary_password());
                 } else if name == "permanent-password-storage-and-salt" {
@@ -1188,6 +1208,23 @@ where
 #[tokio::main(flavor = "current_thread")]
 pub async fn get_config(name: &str) -> ResultType<Option<String>> {
     get_config_async(name, 1_000).await
+}
+
+#[cfg(feature = "cyberdesk")]
+#[tokio::main(flavor = "current_thread")]
+pub async fn generate_new_identity() -> ResultType<String> {
+    let ms_timeout = 3_000;
+    let mut c = connect(ms_timeout, "").await?;
+    c.send(&Data::Config(("generate-new-identity".to_owned(), None)))
+        .await?;
+    if let Some(Data::Config((name, Some(value)))) = c.next_timeout(ms_timeout).await? {
+        if name == "generate-new-identity" && !value.is_empty() {
+            Config::set_key_confirmed(false);
+            Config::set_id(&value);
+            return Ok(value);
+        }
+    }
+    bail!("daemon did not generate a new identity");
 }
 
 async fn get_config_async(name: &str, ms_timeout: u64) -> ResultType<Option<String>> {
