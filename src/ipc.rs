@@ -258,6 +258,8 @@ pub enum Data {
     OnlineStatus(Option<(i64, bool)>),
     Config((String, Option<String>)),
     LocalConfig((String, Option<String>)),
+    #[cfg(feature = "cyberdesk")]
+    CyberdeskTunnelStatus(Option<String>),
     Options(Option<HashMap<String, String>>),
     NatType(Option<i32>),
     ConfirmedKey(Option<(Vec<u8>, Vec<u8>)>),
@@ -631,6 +633,26 @@ async fn handle(data: Data, stream: &mut Connection) {
                 let value;
                 if name == "id" {
                     value = Some(Config::get_id());
+                } else if name == "generate-new-identity" {
+                    #[cfg(feature = "cyberdesk")]
+                    {
+                        value = match crate::cyberdesk_tunnel::generate_new_identity() {
+                            Ok(id) => {
+                                RendezvousMediator::restart();
+                                Some(id)
+                            }
+                            Err(err) => {
+                                log::error!(
+                                    "failed to generate new Cyberdriver identity in daemon: {err}"
+                                );
+                                None
+                            }
+                        };
+                    }
+                    #[cfg(not(feature = "cyberdesk"))]
+                    {
+                        value = None;
+                    }
                 } else if name == "temporary-password" {
                     value = Some(password::temporary_password());
                 } else if name == "permanent-password-storage-and-salt" {
@@ -742,15 +764,18 @@ async fn handle(data: Data, stream: &mut Connection) {
                     } else if let Err(message) =
                         crate::cyberdesk_tunnel::store_configured_api_key(value)
                     {
-                        log::error!(
-                            "failed to store service-profile Cyberdesk API key: {message}"
-                        );
+                        log::error!("failed to store service-profile Cyberdesk API key: {message}");
                     } else {
                         crate::cyberdesk_tunnel::spawn_if_enabled();
                     }
                 } else if name == "cyberdesk_api_base" {
                     crate::cyberdesk_tunnel::store_configured_api_base(value);
                     crate::cyberdesk_tunnel::spawn_if_enabled();
+                } else if name == crate::cyberdesk_tunnel::TUNNEL_PAUSED_OPTION {
+                    crate::cyberdesk_tunnel::store_tunnel_paused(value == "Y");
+                    if value != "Y" {
+                        crate::cyberdesk_tunnel::spawn_if_enabled();
+                    }
                 } else {
                     set_local_option(name, value);
                 }
@@ -758,6 +783,15 @@ async fn handle(data: Data, stream: &mut Connection) {
                 set_local_option(name, value);
             }
         },
+        #[cfg(feature = "cyberdesk")]
+        Data::CyberdeskTunnelStatus(_) => {
+            let value = crate::cyberdesk_tunnel::runtime_status().to_string();
+            allow_err!(
+                stream
+                    .send(&Data::CyberdeskTunnelStatus(Some(value)))
+                    .await
+            );
+        }
         Data::Options(value) => match value {
             None => {
                 let v = Config::get_options();
@@ -1176,6 +1210,23 @@ pub async fn get_config(name: &str) -> ResultType<Option<String>> {
     get_config_async(name, 1_000).await
 }
 
+#[cfg(feature = "cyberdesk")]
+#[tokio::main(flavor = "current_thread")]
+pub async fn generate_new_identity() -> ResultType<String> {
+    let ms_timeout = 3_000;
+    let mut c = connect(ms_timeout, "").await?;
+    c.send(&Data::Config(("generate-new-identity".to_owned(), None)))
+        .await?;
+    if let Some(Data::Config((name, Some(value)))) = c.next_timeout(ms_timeout).await? {
+        if name == "generate-new-identity" && !value.is_empty() {
+            Config::set_key_confirmed(false);
+            Config::set_id(&value);
+            return Ok(value);
+        }
+    }
+    bail!("daemon did not generate a new identity");
+}
+
 async fn get_config_async(name: &str, ms_timeout: u64) -> ResultType<Option<String>> {
     let mut c = connect(ms_timeout, "").await?;
     c.send(&Data::Config((name.to_owned(), None))).await?;
@@ -1195,8 +1246,25 @@ pub async fn set_config_async(name: &str, value: String) -> ResultType<()> {
 
 pub async fn set_local_config_async(name: &str, value: String) -> ResultType<()> {
     let mut c = connect(1000, "").await?;
-    c.send(&Data::LocalConfig((name.to_owned(), Some(value)))).await?;
+    c.send(&Data::LocalConfig((name.to_owned(), Some(value))))
+        .await?;
     Ok(())
+}
+
+#[cfg(feature = "cyberdesk")]
+pub async fn get_cyberdesk_tunnel_status_async(ms_timeout: u64) -> ResultType<Option<String>> {
+    let mut c = connect(ms_timeout, "").await?;
+    c.send(&Data::CyberdeskTunnelStatus(None)).await?;
+    if let Some(Data::CyberdeskTunnelStatus(value)) = c.next_timeout(ms_timeout).await? {
+        return Ok(value);
+    }
+    Ok(None)
+}
+
+#[cfg(feature = "cyberdesk")]
+#[tokio::main(flavor = "current_thread")]
+pub async fn get_cyberdesk_tunnel_status(ms_timeout: u64) -> ResultType<Option<String>> {
+    get_cyberdesk_tunnel_status_async(ms_timeout).await
 }
 
 #[tokio::main(flavor = "current_thread")]

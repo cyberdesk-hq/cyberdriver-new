@@ -1026,7 +1026,7 @@ fn read_exact_or_eof<R: Read>(reader: &mut R, buf: &mut [u8]) -> std::io::Result
 
 /// Open a named pipe as a client.
 /// `for_read`: true for reading (input pipe), false for writing (output pipe).
-fn open_pipe(pipe_name: &str, for_read: bool) -> Result<File> {
+pub fn open_pipe(pipe_name: &str, for_read: bool) -> Result<File> {
     let wide_name: Vec<u16> = OsStr::new(pipe_name)
         .encode_wide()
         .chain(std::iter::once(0))

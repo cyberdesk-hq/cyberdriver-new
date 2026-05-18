@@ -473,7 +473,22 @@ class _GeneralState extends State<_General> {
         _Button(serviceStop.value ? 'Start' : 'Stop', () {
           () async {
             serviceBtnEnabled.value = false;
-            await start_service(serviceStop.value);
+            if (serviceStop.value) {
+              if (bind
+                  .mainGetLocalOption(key: 'cyberdesk_api_key')
+                  .trim()
+                  .isEmpty) {
+                showToast('Cyberdesk API key required');
+              } else {
+                await bind.mainSetLocalOption(
+                    key: 'cyberdesk_tunnel_paused', value: '');
+                await start_service(true);
+              }
+            } else {
+              await bind.mainSetLocalOption(
+                  key: 'cyberdesk_tunnel_paused', value: 'Y');
+              await start_service(false);
+            }
             // enable the button after 1 second
             Future.delayed(const Duration(seconds: 1), () {
               serviceBtnEnabled.value = true;
@@ -1540,6 +1555,8 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
   bool locked = !isWeb && bind.mainIsInstalled();
+  final RxBool serviceStop =
+      isWeb ? RxBool(false) : Get.find<RxBool>(tag: 'stop-service');
   final _cyberdeskApiKeyController = TextEditingController();
   final _remoteKeepaliveForController = TextEditingController();
   bool _cyberdeskApiKeyObscured = true;
@@ -1626,6 +1643,11 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   }
 
   Future<void> _copyCyberdeskDiagnostics() async {
+    Map<String, dynamic> connectStatus = {};
+    try {
+      connectStatus =
+          jsonDecode(await bind.mainGetConnectStatus()) as Map<String, dynamic>;
+    } catch (_) {}
     final payload = {
       'app': CyberdeskBranding.appName,
       'api_key_configured':
@@ -1640,6 +1662,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
       'keepalive_enabled':
           bind.mainGetLocalOption(key: 'cyberdesk_keepalive_enabled') != 'N',
       'service_status': stateGlobal.svcStatus.value.toString(),
+      'cyberdesk_tunnel': connectStatus['cyberdesk_tunnel'],
       'macos_permissions': {
         if (isMacOS)
           'screen_recording': bind.mainIsCanScreenRecording(prompt: false),
@@ -1805,10 +1828,10 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
               divider,
               listTile(
                 icon: Icons.cloud_done_outlined,
-                title: CyberdeskBranding.tunnelStatusLabel,
+                title: 'Cyberdriver Service',
                 showTooltip: true,
                 tooltipMessage:
-                    'Set a Cyberdesk org API key to enable dashboard streaming and remote control. Desktop sign-in is optional and only used for desktop-to-desktop peer access.',
+                    'Set a Cyberdesk org API key to start the Cyberdriver Service for dashboard streaming and remote control.',
                 trailing: Text(
                   cyberdeskApiKeyConfigured
                       ? 'Configured'
@@ -1827,8 +1850,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                       enabled: !locked,
                       obscureText: _cyberdeskApiKeyObscured,
                       decoration: InputDecoration(
-                        labelText:
-                            CyberdeskBranding.apiKeyFieldLabel,
+                        labelText: CyberdeskBranding.apiKeyFieldLabel,
                         hintText: cyberdeskApiKeyConfigured
                             ? translate('API key is configured')
                             : 'ak_...',
@@ -1870,16 +1892,29 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                                     }
                                     _cyberdeskApiKeyController.clear();
                                   }
-                                  await start_service(true);
+                                  await bind.mainSetLocalOption(
+                                      key: 'cyberdesk_tunnel_paused',
+                                      value: '');
+                                  if (serviceStop.value ||
+                                      stateGlobal.svcStatus.value !=
+                                          SvcStatus.ready) {
+                                    await start_service(true);
+                                  }
                                   setState(() {});
                                 },
-                          child: const Text('Save and connect'),
+                          child: const Text('Save and start'),
                         ),
                         const SizedBox(width: 8),
                         OutlinedButton(
                           onPressed: locked || !cyberdeskApiKeyConfigured
                               ? null
                               : () async {
+                                  await bind.mainSetLocalOption(
+                                      key: 'cyberdesk_tunnel_paused',
+                                      value: 'Y');
+                                  if (!serviceStop.value) {
+                                    await start_service(false);
+                                  }
                                   await bind.mainSetLocalOption(
                                       key: 'cyberdesk_api_key', value: '');
                                   _cyberdeskApiKeyController.clear();
@@ -1946,7 +1981,9 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                         const SizedBox(width: 8),
                         OutlinedButton(
                           onPressed: locked ||
-                                  _remoteKeepaliveForController.text.trim().isEmpty
+                                  _remoteKeepaliveForController.text
+                                      .trim()
+                                      .isEmpty
                               ? null
                               : () async {
                                   await bind.mainSetLocalOption(

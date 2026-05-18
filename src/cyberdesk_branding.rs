@@ -176,3 +176,14 @@ pub fn apply_environment(environment: CyberdeskEnvironment) {
     crate::cyberdesk_tunnel::store_configured_api_base(environment.tunnel_api_base().to_owned());
     LocalConfig::set_option(ENVIRONMENT_OPTION.to_owned(), environment.name().to_owned());
 }
+
+pub fn ensure_environment_configured() {
+    match CyberdeskEnvironment::parse(&LocalConfig::get_option(ENVIRONMENT_OPTION)) {
+        Some(environment) => apply_environment(environment),
+        None => {
+            if LocalConfig::get_option(ENVIRONMENT_OPTION).trim().is_empty() {
+                apply_environment(CyberdeskEnvironment::Production);
+            }
+        }
+    }
+}

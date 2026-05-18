@@ -638,6 +638,15 @@ pub fn core_main() -> Option<Vec<String>> {
                 }
             }
             return None;
+        } else if args[0] == "--cyberdesk-user-helper" {
+            #[cfg(all(target_os = "windows", feature = "cyberdesk"))]
+            {
+                let helper_args: Vec<String> = args[1..].to_vec();
+                if let Err(e) = crate::cyberdesk_tunnel::user_context::run_helper(&helper_args) {
+                    log::error!("Cyberdesk user helper failed: {}", e);
+                }
+            }
+            return None;
         } else if args[0] == "--cm" {
             // call connection manager to establish connections
             // meanwhile, return true to call flutter window to show control panel

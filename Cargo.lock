@@ -7270,7 +7270,7 @@ dependencies = [
 
 [[package]]
 name = "rustdesk"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "android-wakelock",
  "android_logger",
@@ -8829,6 +8829,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tungstenite 0.24.0",
+ "webpki-roots 0.26.9",
 ]
 
 [[package]]

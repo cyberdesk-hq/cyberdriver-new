@@ -569,6 +569,88 @@ extern "system" {
     fn BlockInput(v: BOOL) -> BOOL;
 }
 
+const RDP_CONSOLE_RESTORE_COOLDOWN: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowsSessionKind {
+    Console,
+    Rdp,
+    Ica,
+    Unknown,
+}
+
+impl WindowsSessionKind {
+    fn from_session_name(name: &str) -> Self {
+        let normalized = name.to_ascii_lowercase();
+        if normalized.starts_with("console") {
+            Self::Console
+        } else if normalized.starts_with("rdp") {
+            Self::Rdp
+        } else if normalized.starts_with("ica") {
+            Self::Ica
+        } else {
+            Self::Unknown
+        }
+    }
+
+    fn is_remote(self) -> bool {
+        matches!(self, Self::Rdp | Self::Ica)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SelectedWindowsSession {
+    id: DWORD,
+    kind: WindowsSessionKind,
+}
+
+impl SelectedWindowsSession {
+    fn from_id(id: DWORD) -> Self {
+        let kind = if id == u32::MAX {
+            WindowsSessionKind::Unknown
+        } else {
+            session_kind(id)
+        };
+        Self { id, kind }
+    }
+
+    fn current() -> Self {
+        let id = unsafe { get_current_session(share_rdp()) };
+        Self::from_id(id)
+    }
+
+    fn current_valid() -> Option<Self> {
+        let session = Self::current();
+        if session.id == u32::MAX {
+            None
+        } else {
+            Some(session)
+        }
+    }
+}
+
+#[derive(Default)]
+struct RdpConsoleRestoreState {
+    last_attempted_sid: Option<DWORD>,
+    last_attempted_at: Option<Instant>,
+}
+
+impl RdpConsoleRestoreState {
+    fn should_attempt(&self, session_id: DWORD) -> bool {
+        if self.last_attempted_sid != Some(session_id) {
+            return true;
+        }
+        self.last_attempted_at
+            .map(|attempted_at| attempted_at.elapsed() >= RDP_CONSOLE_RESTORE_COOLDOWN)
+            .unwrap_or(true)
+    }
+
+    fn record_attempt(&mut self, session_id: DWORD) {
+        self.last_attempted_sid = Some(session_id);
+        self.last_attempted_at = Some(Instant::now());
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
     let event_handler = move |control_event| -> ServiceControlHandlerResult {
@@ -605,22 +687,37 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
     // Tell the system that the service is running now
     status_handle.set_service_status(next_status)?;
 
-    let mut session_id = unsafe { get_current_session(share_rdp()) };
+    let mut selected_session = SelectedWindowsSession::current();
+    let mut observed_session = selected_session;
+    let mut session_id = selected_session.id;
     log::info!("session id {}", session_id);
     let mut h_process = launch_server(session_id, true).await.unwrap_or(NULL);
     let mut incoming = ipc::new_listener(crate::POSTFIX_SERVICE).await?;
     let mut stored_usid = None;
+    let mut rdp_console_restore = RdpConsoleRestoreState::default();
     loop {
         let sids: Vec<_> = get_available_sessions(false)
             .iter()
             .map(|e| e.sid)
             .collect();
         if !sids.contains(&session_id) || !is_share_rdp() {
-            let current_active_session = unsafe { get_current_session(share_rdp()) };
-            if session_id != current_active_session {
-                session_id = current_active_session;
-                // https://github.com/rustdesk/rustdesk/discussions/10039
+            let current_active_session = SelectedWindowsSession::current();
+            if session_id != current_active_session.id {
                 let count = ipc::get_port_forward_session_count(1000).await.unwrap_or(0);
+                if count == 0 {
+                    maybe_restore_rdp_session_to_console(
+                        observed_session,
+                        current_active_session,
+                        &mut rdp_console_restore,
+                    );
+                    selected_session =
+                        SelectedWindowsSession::current_valid().unwrap_or(current_active_session);
+                } else {
+                    selected_session = current_active_session;
+                }
+                observed_session = selected_session;
+                session_id = selected_session.id;
+                // https://github.com/rustdesk/rustdesk/discussions/10039
                 if count == 0 {
                     h_process = launch_server(session_id, true).await.unwrap_or(NULL);
                 }
@@ -649,6 +746,11 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
                                             usid
                                         );
                                         session_id = usid;
+                                        selected_session =
+                                            SelectedWindowsSession::from_id(session_id);
+                                        // Do not feed user-selected IPC session ids into the
+                                        // privileged tscon restore target. Only WTS-observed
+                                        // transitions update observed_session.
                                         stored_usid = Some(session_id);
                                         h_process =
                                             launch_server(session_id, true).await.unwrap_or(NULL);
@@ -664,15 +766,31 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
             Err(_) => {
                 // timeout
                 unsafe {
-                    let tmp = get_current_session(share_rdp());
-                    if tmp == 0xFFFFFFFF {
+                    let Some(tmp_session) = SelectedWindowsSession::current_valid() else {
                         continue;
-                    }
+                    };
+                    let tmp = tmp_session.id;
                     let mut close_sent = false;
                     if tmp != session_id && stored_usid != Some(session_id) {
-                        log::info!("session changed from {} to {}", session_id, tmp);
-                        session_id = tmp;
                         let count = ipc::get_port_forward_session_count(1000).await.unwrap_or(0);
+                        if count == 0 {
+                            maybe_restore_rdp_session_to_console(
+                                observed_session,
+                                tmp_session,
+                                &mut rdp_console_restore,
+                            );
+                            selected_session =
+                                SelectedWindowsSession::current_valid().unwrap_or(tmp_session);
+                        } else {
+                            selected_session = tmp_session;
+                        }
+                        observed_session = selected_session;
+                        log::info!(
+                            "session changed from {} to {}",
+                            session_id,
+                            selected_session.id
+                        );
+                        session_id = selected_session.id;
                         if count == 0 {
                             send_close_async("").await.ok();
                             close_sent = true;
@@ -714,6 +832,110 @@ async fn run_service(_arguments: Vec<OsString>) -> ResultType<()> {
     })?;
 
     Ok(())
+}
+
+fn session_kind(session_id: DWORD) -> WindowsSessionKind {
+    get_available_sessions(true)
+        .into_iter()
+        .find(|session| session.sid == session_id)
+        .map(|session| WindowsSessionKind::from_session_name(&session.name))
+        .unwrap_or(WindowsSessionKind::Unknown)
+}
+
+fn is_session_id_locked(session_id: DWORD) -> bool {
+    unsafe { is_session_locked(session_id) == TRUE }
+}
+
+fn maybe_restore_rdp_session_to_console(
+    previous: SelectedWindowsSession,
+    current: SelectedWindowsSession,
+    state: &mut RdpConsoleRestoreState,
+) {
+    if !previous.kind.is_remote() || current.kind != WindowsSessionKind::Console {
+        return;
+    }
+
+    if !is_session_id_locked(current.id) {
+        log::info!(
+            "Skipping RDP console restore: console session {} is not locked",
+            current.id
+        );
+        return;
+    }
+
+    if !state.should_attempt(previous.id) {
+        log::info!(
+            "Skipping RDP console restore for session {} due to cooldown",
+            previous.id
+        );
+        return;
+    }
+
+    state.record_attempt(previous.id);
+    log::info!(
+        "Attempting RDP console restore: previous session {} ({:?}) -> locked console {}",
+        previous.id,
+        previous.kind,
+        current.id
+    );
+
+    if restore_session_to_console(previous.id) {
+        log::info!(
+            "RDP console restore command completed for session {}",
+            previous.id
+        );
+    } else {
+        log::warn!(
+            "RDP console restore failed for session {}; continuing with existing session behavior",
+            previous.id
+        );
+    }
+}
+
+fn restore_session_to_console(session_id: DWORD) -> bool {
+    let tscon = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32")
+        .join("tscon.exe");
+    let session_arg = session_id.to_string();
+    match std::process::Command::new(&tscon)
+        .arg(&session_arg)
+        .arg("/dest:console")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if output.status.success() {
+                log::info!(
+                    "tscon {} /dest:console succeeded. stdout={:?} stderr={:?}",
+                    session_arg,
+                    stdout.trim(),
+                    stderr.trim()
+                );
+                true
+            } else {
+                log::warn!(
+                    "tscon {} /dest:console exited with status {:?}. stdout={:?} stderr={:?}",
+                    session_arg,
+                    output.status.code(),
+                    stdout.trim(),
+                    stderr.trim()
+                );
+                false
+            }
+        }
+        Err(err) => {
+            log::warn!(
+                "Failed to start tscon for RDP console restore from {}: {}",
+                tscon.display(),
+                err
+            );
+            false
+        }
+    }
 }
 
 async fn launch_server(session_id: DWORD, close_first: bool) -> ResultType<HANDLE> {
@@ -826,6 +1048,43 @@ pub fn run_exe_in_session(
         );
     }
     Ok(None)
+}
+
+pub fn launch_user_process_in_session(
+    session_id: DWORD,
+    cmd: &str,
+    show: bool,
+) -> ResultType<HANDLE> {
+    use std::os::windows::ffi::OsStrExt;
+    let wstr: Vec<u16> = std::ffi::OsStr::new(cmd)
+        .encode_wide()
+        .chain(Some(0).into_iter())
+        .collect();
+    let mut token_pid = 0;
+    let h = unsafe {
+        LaunchProcessWin(
+            wstr.as_ptr(),
+            session_id,
+            TRUE,
+            if show { TRUE } else { FALSE },
+            &mut token_pid,
+        )
+    };
+    if h.is_null() {
+        if token_pid == 0 {
+            bail!(
+                "Failed to launch user-context process in session {}: no process {}",
+                session_id,
+                EXPLORER_EXE
+            );
+        }
+        bail!(
+            "Failed to launch user-context process in session {}: {}",
+            session_id,
+            io::Error::last_os_error()
+        );
+    }
+    Ok(h)
 }
 
 #[tokio::main(flavor = "current_thread")]
